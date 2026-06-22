@@ -1,0 +1,610 @@
+package kiya
+
+import (
+	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	consoleLogger *log.Logger
+
+	logFile    *os.File
+	currentDay string
+
+	wafLogFile    *os.File
+	wafCurrentDay string
+
+	logMutex sync.Mutex
+
+	telegramToken string
+	telegramGroup string
+	isDebug       bool
+
+	telegramLastSent = make(map[string]time.Time)
+	telegramMutex    sync.Mutex
+	telegramCancel   context.CancelFunc
+
+	logChan   chan logEntry
+	stopLogCh chan struct{}
+	logWg     sync.WaitGroup
+
+	logStateMu sync.RWMutex
+
+	telegramSem = make(chan struct{}, 5)
+	telegramWg  sync.WaitGroup
+
+	httpClient *http.Client
+
+	droppedLogs atomic.Int64
+)
+
+const (
+	colorReset   = "\033[0m"
+	colorGreen   = "\033[32m"
+	colorYellow  = "\033[33m"
+	colorRed     = "\033[31m"
+	colorMagenta = "\033[35m"
+	colorCyan    = "\033[36m"
+)
+
+type logEntry struct {
+	isWAF        bool
+	level        string
+	message      string
+	sendTelegram bool
+}
+
+func init() {
+	httpClient = &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			DisableCompression: true,
+		},
+	}
+
+	consoleLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
+}
+
+func InitLogger(debug bool, token, group string) {
+	logStateMu.Lock()
+	defer logStateMu.Unlock()
+
+	if logChan != nil {
+		closeLoggerUnsafe()
+	}
+
+	isDebug = debug
+	telegramToken = token
+	telegramGroup = group
+
+	consoleLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
+
+	if isDebug {
+		log.Print("[Goserver] Logger initialized in DEBUG mode (No file logging)")
+		return
+	}
+
+	initLogger()
+	initWAFLogger()
+
+	var ctx context.Context
+	ctx, telegramCancel = context.WithCancel(context.Background())
+	startTelegramCleanup(ctx)
+
+	logChan = make(chan logEntry, 2000)
+	stopLogCh = make(chan struct{})
+
+	droppedLogs.Store(0)
+
+	for i := 0; i < 3; i++ {
+		logWg.Add(1)
+		go logWorker()
+	}
+
+	log.Print("[Goserver] Logger initialized in PRODUCTION mode (Async File & Telegram Logging)")
+}
+
+func logWorker() {
+	defer logWg.Done()
+	for {
+		select {
+		case <-stopLogCh:
+			for {
+				select {
+				case entry := <-logChan:
+					processLogEntry(entry)
+				default:
+					return
+				}
+			}
+		case entry := <-logChan:
+			processLogEntry(entry)
+
+			dropped := droppedLogs.Swap(0)
+			if dropped > 0 {
+				consoleLogger.Printf("%s[WARN]%s %d log entries dropped (channel full)", colorYellow, colorReset, dropped)
+			}
+		}
+	}
+}
+
+func processLogEntry(entry logEntry) {
+	safeMsg := sanitizeLogMessage(entry.message)
+
+	if entry.isWAF {
+		writeWAFToFile(entry.level, safeMsg)
+	} else {
+		writeAppToFile(entry.level, safeMsg)
+	}
+
+	if entry.sendTelegram {
+		prefix := "[APP ERROR] "
+		if entry.isWAF {
+			prefix = "[WAF ATTACK] "
+		}
+		telegramWg.Add(1)
+		go func(msg string) {
+			defer telegramWg.Done()
+			telegramSem <- struct{}{}
+			defer func() { <-telegramSem }()
+			sendTelegramDirect(prefix + truncateString(msg, 200))
+		}(safeMsg)
+	}
+}
+
+func sanitizeLogMessage(msg string) string {
+	msg = strings.ReplaceAll(msg, "\n", " ")
+	msg = strings.ReplaceAll(msg, "\r", " ")
+	return msg
+}
+
+func writeAppToFile(level string, msg string) {
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	checkAndRotateApp()
+
+	if logFile != nil {
+		fileLine := fmt.Sprintf("%s [%s] %s\n",
+			time.Now().Format("2006/01/02 15:04:05"),
+			level, msg)
+		logFile.WriteString(fileLine)
+	}
+}
+
+func writeWAFToFile(level string, msg string) {
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	checkAndRotateWAF()
+
+	if wafLogFile != nil {
+		fileLine := fmt.Sprintf("%s [%s] %s\n",
+			time.Now().Format("2006/01/02 15:04:05"),
+			level, msg)
+		wafLogFile.WriteString(fileLine)
+	}
+}
+
+func startTelegramCleanup(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Minute)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				cleanupTelegramCache()
+			}
+		}
+	}()
+}
+
+func cleanupTelegramCache() {
+	telegramMutex.Lock()
+	defer telegramMutex.Unlock()
+
+	if len(telegramLastSent) > 10000 {
+		telegramLastSent = make(map[string]time.Time)
+		return
+	}
+
+	cutoff := time.Now().Add(-20 * time.Minute)
+	for key, t := range telegramLastSent {
+		if t.Before(cutoff) {
+			delete(telegramLastSent, key)
+		}
+	}
+}
+
+func initLogger() {
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	os.MkdirAll("./temp/log", 0755)
+	day := time.Now().Format("2006-01-02")
+	currentDay = day
+
+	filePath := filepath.Join("./temp/log", "log-"+day+".log")
+
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		log.Printf("CRITICAL: Cannot open log file: %v", err)
+		return
+	}
+
+	logFile = f
+}
+
+func initWAFLogger() {
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	os.MkdirAll("./temp/waf", 0755)
+	day := time.Now().Format("2006-01-02")
+	wafCurrentDay = day
+
+	filePath := filepath.Join("./temp/waf", "waf-"+day+".log")
+
+	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.SetOutput(os.Stderr)
+		log.Printf("CRITICAL: Cannot open waf log file: %v", err)
+		return
+	}
+
+	wafLogFile = f
+}
+
+func checkAndRotateApp() {
+	if isDebug {
+		return
+	}
+
+	day := time.Now().Format("2006-01-02")
+	if day == currentDay {
+		return
+	}
+
+	newFilePath := filepath.Join("./temp/log", "log-"+day+".log")
+	f, err := os.OpenFile(newFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+
+	if logFile != nil {
+		logFile.Close()
+	}
+	logFile = f
+	currentDay = day
+}
+
+func checkAndRotateWAF() {
+	if isDebug {
+		return
+	}
+
+	day := time.Now().Format("2006-01-02")
+	if day == wafCurrentDay {
+		return
+	}
+
+	newFilePath := filepath.Join("./temp/waf", "waf-"+day+".log")
+	f, err := os.OpenFile(newFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+
+	if wafLogFile != nil {
+		wafLogFile.Close()
+	}
+	wafLogFile = f
+	wafCurrentDay = day
+}
+
+func logf(level string, color string, format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+
+	logStateMu.RLock()
+	cl := consoleLogger
+	logStateMu.RUnlock()
+
+	cl.Printf("%s[%s] %s%s", color, level, msg, colorReset)
+
+	logStateMu.RLock()
+	ch := logChan
+	logStateMu.RUnlock()
+
+	if ch != nil {
+		select {
+		case ch <- logEntry{
+			isWAF:        false,
+			level:        level,
+			message:      msg,
+			sendTelegram: false,
+		}:
+		default:
+			droppedLogs.Add(1)
+		}
+	}
+}
+
+func LogInfo(format string, v ...any) {
+	logf("INFO", colorGreen, format, v...)
+}
+
+func LogWarn(format string, v ...any) {
+	logf("WARN", colorYellow, format, v...)
+}
+
+func LogError(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+
+	logStateMu.RLock()
+	cl := consoleLogger
+	debug := isDebug
+	ch := logChan
+	logStateMu.RUnlock()
+
+	cl.Printf("%s[ERROR] %s%s", colorRed, msg, colorReset)
+
+	if ch != nil {
+		select {
+		case ch <- logEntry{
+			isWAF:        false,
+			level:        "ERROR",
+			message:      msg,
+			sendTelegram: !debug,
+		}:
+		default:
+			droppedLogs.Add(1)
+		}
+	}
+}
+
+func LogWAF(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+
+	logStateMu.RLock()
+	debug := isDebug
+	cl := consoleLogger
+	ch := logChan
+	logStateMu.RUnlock()
+
+	if debug {
+		fmt.Printf("%s[WAF DEBUG]%s %s\n", colorCyan, colorReset, msg)
+		return
+	}
+
+	cl.Printf("%s[ATTACK] %s%s", colorMagenta, msg, colorReset)
+
+	if ch != nil {
+		select {
+		case ch <- logEntry{
+			isWAF:        true,
+			level:        "ATTACK",
+			message:      msg,
+			sendTelegram: !debug,
+		}:
+		default:
+			droppedLogs.Add(1)
+		}
+	}
+}
+
+func LogTelegram(r *http.Request, err any) {
+	logStateMu.RLock()
+	debug := isDebug
+	token := telegramToken
+	group := telegramGroup
+	logStateMu.RUnlock()
+
+	if debug {
+		return
+	}
+
+	if err == nil {
+		return
+	}
+
+	if token == "" || group == "" {
+		return
+	}
+
+	const maxLen = 2000
+
+	var method, path, ip, query string
+
+	if r != nil {
+		method = htmlEscape(r.Method)
+		path = htmlEscape(r.URL.Path)
+		query = r.URL.RawQuery
+		ip = htmlEscape(realIP(r))
+	} else {
+		method = "-"
+		path = "-"
+		ip = "-"
+	}
+
+	errStr := fmt.Sprintf("%v", err)
+	if len(errStr) > maxLen {
+		errStr = errStr[:maxLen] + "…"
+	}
+
+	var msg strings.Builder
+	msg.WriteString("<b>GOSERVER ALERT</b>\n\n")
+	msg.WriteString("<b>Request</b>\n")
+	msg.WriteString(fmt.Sprintf("%s %s\n", method, path))
+	if query != "" {
+		msg.WriteString(fmt.Sprintf("Query: %s\n", htmlEscape(query)))
+	}
+	msg.WriteString(fmt.Sprintf("IP: %s\n\n", ip))
+	msg.WriteString("<b>Error</b>\n")
+	msg.WriteString("<pre>")
+	msg.WriteString(htmlEscape(errStr))
+	msg.WriteString("</pre>")
+
+	sendTelegramHTML(msg.String())
+}
+
+func sendTelegramDirect(text string) {
+	logStateMu.RLock()
+	token := telegramToken
+	group := telegramGroup
+	logStateMu.RUnlock()
+
+	if token == "" || group == "" {
+		return
+	}
+
+	key := getHash(text)
+	telegramMutex.Lock()
+	last, ok := telegramLastSent[key]
+	if ok && time.Since(last) < 10*time.Minute {
+		telegramMutex.Unlock()
+		return
+	}
+	telegramLastSent[key] = time.Now()
+	telegramMutex.Unlock()
+
+	urlSend := "https://api.telegram.org/bot" + token + "/sendMessage"
+	data := strings.NewReader(fmt.Sprintf("chat_id=%s&text=%s", group, url.QueryEscape(text)))
+
+	doSendTelegram(urlSend, data)
+}
+
+func sendTelegramHTML(text string) {
+	logStateMu.RLock()
+	token := telegramToken
+	group := telegramGroup
+	logStateMu.RUnlock()
+
+	if token == "" || group == "" {
+		return
+	}
+
+	key := getHash(text)
+	telegramMutex.Lock()
+	last, ok := telegramLastSent[key]
+	if ok && time.Since(last) < 5*time.Minute {
+		telegramMutex.Unlock()
+		return
+	}
+	telegramLastSent[key] = time.Now()
+	telegramMutex.Unlock()
+
+	urlSend := "https://api.telegram.org/bot" + token + "/sendMessage"
+	data := strings.NewReader(fmt.Sprintf("chat_id=%s&text=%s&parse_mode=HTML&disable_web_page_preview=true",
+		group, url.QueryEscape(text)))
+
+	doSendTelegram(urlSend, data)
+}
+
+func doSendTelegram(urlSend string, data *strings.Reader) {
+	req, err := http.NewRequest("POST", urlSend, data)
+	if err != nil {
+		log.Printf("Telegram request error: %v", err)
+		return
+	}
+
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		log.Printf("Telegram send error: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		log.Printf("Telegram response error: %s", string(body))
+	}
+}
+
+func htmlEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch r {
+		case '&':
+			b.WriteString("&amp;")
+		case '<':
+			b.WriteString("&lt;")
+		case '>':
+			b.WriteString("&gt;")
+		case '"':
+			b.WriteString("&quot;")
+		case '\'':
+			b.WriteString("&#39;")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func getHash(s string) string {
+	h := sha1.New()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))[:10]
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func closeLoggerUnsafe() {
+	if telegramCancel != nil {
+		telegramCancel()
+		telegramCancel = nil
+	}
+
+	if stopLogCh != nil {
+		close(stopLogCh)
+		logWg.Wait()
+		stopLogCh = nil
+	}
+
+	logChan = nil
+
+	telegramWg.Wait()
+
+	logMutex.Lock()
+	defer logMutex.Unlock()
+
+	if logFile != nil {
+		logFile.Close()
+		logFile = nil
+	}
+
+	if wafLogFile != nil {
+		wafLogFile.Close()
+		wafLogFile = nil
+	}
+}
+
+func CloseLogger() {
+	logStateMu.Lock()
+	defer logStateMu.Unlock()
+	closeLoggerUnsafe()
+}
