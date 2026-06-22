@@ -1,28 +1,31 @@
-package kiya
+package http
 
 import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-func (r *Resources) File(key string) (*multipart.FileHeader, error) {
-	if r.Request.MultipartForm == nil {
-		if err := r.Request.ParseMultipartForm(maxMultipartMemory); err != nil {
+// File retrieves a file header from the request.
+func File(req *http.Request, key string) (*multipart.FileHeader, error) {
+	if req.MultipartForm == nil {
+		if err := req.ParseMultipartForm(MaxMultipartMemory); err != nil {
 			return nil, err
 		}
 	}
-	_, fh, err := r.Request.FormFile(key)
+	_, fh, err := req.FormFile(key)
 	if err != nil {
 		return nil, err
 	}
 	return fh, nil
 }
 
-func (r *Resources) SaveFile(key string, dstPath string) error {
+// SaveFile saves an uploaded file to the specified destination path.
+func SaveFile(req *http.Request, key string, dstPath string) error {
 	cleanPath := filepath.Clean(dstPath)
 
 	if filepath.IsAbs(cleanPath) {
@@ -37,13 +40,13 @@ func (r *Resources) SaveFile(key string, dstPath string) error {
 		return errors.New("invalid destination path: null character detected")
 	}
 
-	if r.Request.MultipartForm == nil {
-		if err := r.Request.ParseMultipartForm(maxMultipartMemory); err != nil {
+	if req.MultipartForm == nil {
+		if err := req.ParseMultipartForm(MaxMultipartMemory); err != nil {
 			return err
 		}
 	}
 
-	src, _, err := r.Request.FormFile(key)
+	src, _, err := req.FormFile(key)
 	if err != nil {
 		return err
 	}

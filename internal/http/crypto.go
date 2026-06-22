@@ -1,4 +1,4 @@
-package kiya
+package http
 
 import (
 	"crypto/aes"
@@ -8,10 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/fuadarradhi/kiya/internal/security"
+	"github.com/fuadarradhi/kiya/internal/util"
 )
 
 var (
@@ -20,12 +24,13 @@ var (
 	reHeadTag    = regexp.MustCompile(`(?i)<head\b[^>]*>`)
 )
 
-func (r *Resources) Encrypt(plaintext []byte) (string, error) {
-	if len(r.encryptKey) == 0 {
+// Encrypt encrypts plaintext using AES-GCM with the provided key.
+func Encrypt(plaintext []byte, encryptKey []byte) (string, error) {
+	if len(encryptKey) == 0 {
 		return "", fmt.Errorf("encryption key not configured")
 	}
 
-	block, err := aes.NewCipher(r.encryptKey)
+	block, err := aes.NewCipher(encryptKey)
 	if err != nil {
 		return "", fmt.Errorf("create cipher: %w", err)
 	}
@@ -41,12 +46,12 @@ func (r *Resources) Encrypt(plaintext []byte) (string, error) {
 	}
 
 	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-
 	return base64.RawURLEncoding.EncodeToString(ciphertext), nil
 }
 
-func (r *Resources) Decrypt(encoded string) ([]byte, error) {
-	if len(r.encryptKey) == 0 {
+// Decrypt decrypts an AES-GCM encoded string.
+func Decrypt(encoded string, encryptKey []byte) ([]byte, error) {
+	if len(encryptKey) == 0 {
 		return nil, fmt.Errorf("encryption key not configured")
 	}
 
@@ -55,7 +60,7 @@ func (r *Resources) Decrypt(encoded string) ([]byte, error) {
 		return nil, fmt.Errorf("decode base64url: %w", err)
 	}
 
-	block, err := aes.NewCipher(r.encryptKey)
+	block, err := aes.NewCipher(encryptKey)
 	if err != nil {
 		return nil, fmt.Errorf("create cipher: %w", err)
 	}
@@ -81,45 +86,49 @@ func (r *Resources) Decrypt(encoded string) ([]byte, error) {
 	return plaintext, nil
 }
 
-func (r *Resources) EncryptString(plaintext string) (string, error) {
-	return r.Encrypt([]byte(plaintext))
+// EncryptString encrypts a string.
+func EncryptString(plaintext string, encryptKey []byte) (string, error) {
+	return Encrypt([]byte(plaintext), encryptKey)
 }
 
-func (r *Resources) DecryptString(encoded string) (string, error) {
-	plaintext, err := r.Decrypt(encoded)
+// DecryptString decrypts a string.
+func DecryptString(encoded string, encryptKey []byte) (string, error) {
+	plaintext, err := Decrypt(encoded, encryptKey)
 	if err != nil {
 		return "", err
 	}
 	return string(plaintext), nil
 }
 
-func (r *Resources) GenerateCSRFToken() (string, error) {
-	if len(r.encryptKey) == 0 {
+// GenerateCSRFToken creates a new CSRF token bound to the session.
+func GenerateCSRFToken(session *security.Session, encryptKey []byte) (string, error) {
+	if len(encryptKey) == 0 {
 		return "", fmt.Errorf("encryption key not configured")
 	}
-	if r.Session == nil {
+	if session == nil {
 		return "", fmt.Errorf("session not available")
 	}
 
-	sessionID := r.Session.ID()
+	sessionID := session.ID()
 	if sessionID == "" {
-		sessionID = fmt.Sprintf("%v", r.Session.Get("_t"))
+		sessionID = fmt.Sprintf("%v", session.Get("_t"))
 	}
 
 	timestamp := time.Now().Unix()
 	plaintext := fmt.Sprintf("%s|%d", sessionID, timestamp)
-	return r.EncryptString(plaintext)
+	return EncryptString(plaintext, encryptKey)
 }
 
-func (r *Resources) VerifyCSRFToken(token string) bool {
-	if len(r.encryptKey) == 0 || token == "" {
+// VerifyCSRFToken validates a CSRF token against the current session.
+func VerifyCSRFToken(token string, session *security.Session, encryptKey []byte) bool {
+	if len(encryptKey) == 0 || token == "" {
 		return false
 	}
-	if r.Session == nil {
+	if session == nil {
 		return false
 	}
 
-	plaintext, err := r.DecryptString(token)
+	plaintext, err := DecryptString(token, encryptKey)
 	if err != nil {
 		return false
 	}
@@ -132,9 +141,9 @@ func (r *Resources) VerifyCSRFToken(token string) bool {
 	tokenSessionID := parts[0]
 	timestampStr := parts[1]
 
-	currentSessionID := r.Session.ID()
+	currentSessionID := session.ID()
 	if currentSessionID == "" {
-		currentSessionID = fmt.Sprintf("%v", r.Session.Get("_t"))
+		currentSessionID = fmt.Sprintf("%v", session.Get("_t"))
 	}
 
 	if tokenSessionID != currentSessionID {
@@ -155,18 +164,19 @@ func (r *Resources) VerifyCSRFToken(token string) bool {
 	return true
 }
 
-func (r *Resources) ExtractIP() string {
-	if r.Request == nil {
+// ExtractIP extracts the real IP address from the request.
+func ExtractIP(req *http.Request) string {
+	if req == nil {
 		return ""
 	}
 
-	remoteIP, _, err := net.SplitHostPort(r.Request.RemoteAddr)
+	remoteIP, _, err := net.SplitHostPort(req.RemoteAddr)
 	if err != nil {
-		remoteIP = r.Request.RemoteAddr
+		remoteIP = req.RemoteAddr
 	}
 
-	if isPrivateIP(remoteIP) {
-		if xff := r.Request.Header.Get("X-Forwarded-For"); xff != "" {
+	if util.IsPrivateIP(remoteIP) {
+		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			for i := len(parts) - 1; i >= 0; i-- {
 				ip := strings.TrimSpace(parts[i])
@@ -176,7 +186,7 @@ func (r *Resources) ExtractIP() string {
 			}
 		}
 
-		if xri := r.Request.Header.Get("X-Real-IP"); xri != "" {
+		if xri := req.Header.Get("X-Real-IP"); xri != "" {
 			return strings.TrimSpace(xri)
 		}
 	}
@@ -184,7 +194,8 @@ func (r *Resources) ExtractIP() string {
 	return remoteIP
 }
 
-func injectCSRFIntoForms(html string, token string) string {
+// InjectCSRFIntoForms injects a hidden input into HTML forms.
+func InjectCSRFIntoForms(html string, token string) string {
 	if token == "" {
 		return html
 	}
@@ -194,7 +205,7 @@ func injectCSRFIntoForms(html string, token string) string {
 		return html
 	}
 
-	escapedToken := htmlEscape(token)
+	escapedToken := util.HTMLEscape(token)
 	csrfInput := fmt.Sprintf(
 		`<input type="hidden" name="csrf_token" value="%s">`,
 		escapedToken,
@@ -216,7 +227,8 @@ func injectCSRFIntoForms(html string, token string) string {
 	})
 }
 
-func injectCSRFMeta(html string, token string) string {
+// InjectCSRFMeta injects a meta tag into the HTML head.
+func InjectCSRFMeta(html string, token string) string {
 	if token == "" {
 		return html
 	}
@@ -226,7 +238,7 @@ func injectCSRFMeta(html string, token string) string {
 		return html
 	}
 
-	escapedToken := htmlEscape(token)
+	escapedToken := util.HTMLEscape(token)
 	meta := fmt.Sprintf(
 		`<meta name="csrf-token" content="%s">`,
 		escapedToken,

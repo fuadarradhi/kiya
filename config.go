@@ -6,8 +6,10 @@ import (
 	"time"
 )
 
+// DefaultConditionFunc defines the function signature for default query conditions.
 type DefaultConditionFunc func(fields []string, res *Resources) map[string]any
 
+// Config holds all configuration options for the Kiya framework.
 type Config struct {
 	Debug             bool
 	Telegram          TelegramConfig
@@ -20,11 +22,13 @@ type Config struct {
 	NoLogSuccessPaths []string
 }
 
+// TelegramConfig holds Telegram bot notification settings.
 type TelegramConfig struct {
 	Token string
 	Group string
 }
 
+// ServerConfig holds HTTP server settings.
 type ServerConfig struct {
 	Host              string
 	Port              int
@@ -42,6 +46,7 @@ type ServerConfig struct {
 	CSRFExemptPaths   []string
 }
 
+// DatabaseConfig holds database connection settings.
 type DatabaseConfig struct {
 	Enabled          bool
 	Driver           string
@@ -57,10 +62,12 @@ type DatabaseConfig struct {
 	DefaultCondition DefaultConditionFunc
 }
 
+// ViewConfig holds template engine settings.
 type ViewConfig struct {
 	FS fs.FS
 }
 
+// RateLimiterConfig holds rate limiter settings.
 type RateLimiterConfig struct {
 	Enabled         bool
 	Rate            float64
@@ -70,6 +77,7 @@ type RateLimiterConfig struct {
 	KeyFunc         func(r *http.Request, sess *Session) string
 }
 
+// EncryptionConfig holds encryption key settings.
 type EncryptionConfig struct {
 	Key string
 }

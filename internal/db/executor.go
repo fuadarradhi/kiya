@@ -1,4 +1,4 @@
-package kiya
+package db
 
 import (
 	"context"
@@ -8,6 +8,35 @@ import (
 
 	"github.com/jmoiron/sqlx"
 )
+
+// Result interface for SQL execution results.
+type Result interface {
+	LastInsertId() (int64, error)
+	RowsAffected() (int64, error)
+}
+
+type insertResult struct {
+	lastInsertId int64
+	rowsAffected int64
+}
+
+func (r *insertResult) LastInsertId() (int64, error) { return r.lastInsertId, nil }
+func (r *insertResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }
+
+// Tx interface for database transactions.
+type Tx interface {
+	Executor
+	Commit() error
+	Rollback() error
+}
+
+// Executor interface for database operations.
+type Executor interface {
+	Select(ctx context.Context, dest any, query string, args ...any) error
+	Get(ctx context.Context, dest any, query string, args ...any) error
+	Exec(ctx context.Context, query string, args ...any) (Result, error)
+	Begin(ctx context.Context) (Tx, error)
+}
 
 type sqlxExecutor struct {
 	db *sqlx.DB

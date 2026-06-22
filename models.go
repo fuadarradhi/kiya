@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"reflect"
+
+	"github.com/fuadarradhi/kiya/internal/db"
 )
 
+// BaseModel provides default ORM-like behavior for structs.
 type BaseModel struct {
 	__db            *DB
 	__res           *Resources
@@ -13,8 +16,9 @@ type BaseModel struct {
 	__hasSoftDelete bool
 }
 
-func (b *BaseModel) Init(db *DB, res *Resources, self any) {
-	b.__db = db
+// Init initializes the BaseModel. Called automatically by kiya.Model[T]().
+func (b *BaseModel) Init(database *DB, res *Resources, self any) {
+	b.__db = database
 	b.__res = res
 	b.__self = self
 
@@ -46,7 +50,7 @@ func (b *BaseModel) TableName() string {
 	if b.__self == nil {
 		return ""
 	}
-	name, _ := getTableNameFromModel(b.__self)
+	name, _ := db.GetTableNameFromModel(b.__self)
 	return name
 }
 
@@ -57,7 +61,7 @@ func (b *BaseModel) newBuilder() *Builder {
 	builder := b.__db.Table(b.TableName()).Bind(b.__self).SetResources(b.__res)
 
 	if b.__hasSoftDelete {
-		builder.softDeleteCondition = "deleted_at IS NULL"
+		builder.SetSoftDeleteCondition("deleted_at IS NULL")
 	}
 
 	return builder
@@ -70,41 +74,14 @@ func (b *BaseModel) builderWithID() *Builder {
 		return builder
 	}
 
-	val := reflect.ValueOf(b.__self)
-	if val.Kind() == reflect.Ptr {
-		if val.IsNil() {
-			return builder
-		}
-		val = val.Elem()
-	}
-	if val.Kind() != reflect.Struct {
-		return builder
-	}
-
-	typ := val.Type()
-	info, err := getStructInfo(typ)
+	pks, err := db.GetPrimaryKeys(b.__self)
 	if err != nil {
 		return builder
 	}
 
-	if len(info.primaryKeys) > 0 {
-		for _, f := range info.fields {
-			if f.isPrimary {
-				fieldVal := val.Field(f.idx)
-				if !isZero(fieldVal) {
-					builder.WhereEq(f.name, fieldVal.Interface())
-				}
-			}
-		}
-	} else {
-		for _, f := range info.fields {
-			if f.name == "id" {
-				fieldVal := val.Field(f.idx)
-				if !isZero(fieldVal) {
-					builder.WhereEq("id", fieldVal.Interface())
-				}
-				break
-			}
+	for _, pk := range pks {
+		if !pk.IsZero {
+			builder.WhereEq(pk.ColumnName, pk.Value)
 		}
 	}
 
@@ -117,7 +94,6 @@ func (b *BaseModel) Validate() error {
 	}
 
 	v := b.__res.Validator(b.__self, true)
-
 	return v.Validate()
 }
 
@@ -206,7 +182,7 @@ func (b *BaseModel) Update() (Result, error) {
 }
 
 func (b *BaseModel) UpdateAll() (Result, error) {
-	return b.newBuilder().execUpdate(b.__self, true)
+	return b.newBuilder().UpdateAll(b.__self)
 }
 
 func (b *BaseModel) Delete() (Result, error) {
@@ -214,19 +190,19 @@ func (b *BaseModel) Delete() (Result, error) {
 }
 
 func (b *BaseModel) DeleteAll() (Result, error) {
-	return b.newBuilder().execDelete(b.__self, true)
+	return b.newBuilder().DeleteAll(b.__self)
 }
 
 func (b *BaseModel) Purge() (Result, error) {
 	builder := b.builderWithID()
-	builder.softDeleteCondition = ""
+	builder.ClearSoftDeleteCondition()
 	return builder.Delete()
 }
 
 func (b *BaseModel) PurgeAll() (Result, error) {
 	builder := b.newBuilder()
-	builder.softDeleteCondition = ""
-	return builder.execDelete(b.__self, true)
+	builder.ClearSoftDeleteCondition()
+	return builder.DeleteAll(b.__self)
 }
 
 func (b *BaseModel) Find() (bool, error) {
@@ -247,7 +223,7 @@ func (b *BaseModel) Exist() (bool, error) {
 
 func (b *BaseModel) WithDeleted() *Builder {
 	builder := b.newBuilder()
-	builder.softDeleteCondition = ""
+	builder.ClearSoftDeleteCondition()
 	return builder
 }
 

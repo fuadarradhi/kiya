@@ -1,4 +1,4 @@
-package kiya
+package security
 
 import (
 	"context"
@@ -22,7 +22,8 @@ type rateLimitShard struct {
 	limiters map[string]*rateLimiter
 }
 
-type rateLimitStore struct {
+// Store is a sharded rate limiter store.
+type Store struct {
 	shards          [shardCount]*rateLimitShard
 	rate            float64
 	burst           float64
@@ -32,14 +33,15 @@ type rateLimitStore struct {
 	cancel          context.CancelFunc
 }
 
-func newRateLimitStore(rate float64, burst int, ttl time.Duration, cleanupInterval time.Duration) *rateLimitStore {
+// NewStore creates a new rate limit store.
+func NewStore(rate float64, burst int, ttl time.Duration, cleanupInterval time.Duration) *Store {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if cleanupInterval <= 0 {
 		cleanupInterval = 5 * time.Minute
 	}
 
-	s := &rateLimitStore{
+	s := &Store{
 		rate:            rate,
 		burst:           float64(burst),
 		ttl:             ttl,
@@ -58,17 +60,19 @@ func newRateLimitStore(rate float64, burst int, ttl time.Duration, cleanupInterv
 	return s
 }
 
-func (s *rateLimitStore) Stop() {
+// Stop terminates the cleanup goroutine.
+func (s *Store) Stop() {
 	s.cancel()
 }
 
-func (s *rateLimitStore) getShard(key string) *rateLimitShard {
+func (s *Store) getShard(key string) *rateLimitShard {
 	h := fnv.New32a()
 	h.Write([]byte(key))
 	return s.shards[h.Sum32()%shardCount]
 }
 
-func (s *rateLimitStore) allow(key string) bool {
+// Allow checks if a request is allowed based on the key.
+func (s *Store) Allow(key string) bool {
 	now := time.Now()
 	shard := s.getShard(key)
 
@@ -120,7 +124,7 @@ func (s *rateLimitStore) allow(key string) bool {
 	return true
 }
 
-func (s *rateLimitStore) cleanup() {
+func (s *Store) cleanup() {
 	ticker := time.NewTicker(s.cleanupInterval)
 	defer ticker.Stop()
 

@@ -1,4 +1,4 @@
-package kiya
+package db
 
 import (
 	"errors"
@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
 type dbCachedField struct {
@@ -113,7 +115,7 @@ func getStructInfo(typ reflect.Type) (*dbCachedStruct, error) {
 			if info.autoIncCol == "" {
 				info.autoIncCol = fInfo.name
 			} else {
-				LogWarn("[DB] Multiple autoincrement fields in struct %s, using first: %s", typ.Name(), info.autoIncCol)
+				logger.LogWarn("[DB] Multiple autoincrement fields in struct %s, using first: %s", typ.Name(), info.autoIncCol)
 			}
 		}
 

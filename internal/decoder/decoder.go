@@ -1,4 +1,4 @@
-package kiya
+package decoder
 
 import (
 	"bytes"
@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/araddon/dateparse"
+	"github.com/fuadarradhi/kiya/internal/logger"
 	"github.com/microcosm-cc/bluemonday"
 )
 
 var (
-	formDecoder       *Decoder
+	FormDecoder       *Decoder
 	strictPolicy      *bluemonday.Policy
 	ugcPolicy         *bluemonday.Policy
 	spaceRegex        = regexp.MustCompile(`\s+`)
@@ -27,7 +28,7 @@ var (
 func init() {
 	strictPolicy = bluemonday.StrictPolicy()
 	ugcPolicy = bluemonday.UGCPolicy()
-	formDecoder = NewDecoder()
+	FormDecoder = NewDecoder()
 }
 
 type Mode uint8
@@ -340,7 +341,7 @@ func (d *decoderContext) parseMapData() {
 				isNum = true
 			case ']':
 				if !insideBracket {
-					LogWarn("[Decoder] Invalid format missing '[' for key %s", k)
+					logger.LogWarn("[Decoder] Invalid format missing '[' for key %s", k)
 					continue
 				}
 
@@ -389,7 +390,7 @@ func (d *decoderContext) parseMapData() {
 		}
 
 		if insideBracket {
-			LogWarn("[Decoder] Invalid format missing ']' for key %s", k)
+			logger.LogWarn("[Decoder] Invalid format missing ']' for key %s", k)
 		}
 	}
 }

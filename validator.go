@@ -12,8 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
+// RulesFunc defines the validation function signature.
 type RulesFunc func(val any) error
 
 var (
@@ -23,6 +25,7 @@ var (
 
 var validColumnNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+// Validator handles struct validation and error formatting.
 type Validator struct {
 	res            *Resources
 	globalErrors   []error
@@ -51,6 +54,7 @@ func init() {
 	}
 }
 
+// RegisterRules registers a custom validation rule.
 func RegisterRules(name string, fn func(v *Validator, param string) RulesFunc) {
 	validatorMu.Lock()
 	defer validatorMu.Unlock()
@@ -62,12 +66,14 @@ func RegisterRules(name string, fn func(v *Validator, param string) RulesFunc) {
 	validator[name] = fn
 }
 
+// RegisterSimpleRule registers a simple validation rule without parameters.
 func RegisterSimpleRule(name string, fn func(val any) error) {
 	RegisterRules(name, func(v *Validator, param string) RulesFunc {
 		return fn
 	})
 }
 
+// HasRule checks if a validation rule exists.
 func HasRule(name string) bool {
 	validatorMu.RLock()
 	defer validatorMu.RUnlock()
@@ -126,7 +132,7 @@ func (v *Validator) Bind(form any, bind ...bool) *Validator {
 		}
 
 		if v.uniqueTable == "" {
-			v.uniqueTable = toSnakeCase(val.Type().Name())
+			v.uniqueTable = toSnakeCaseLocal(val.Type().Name())
 		}
 	}
 
@@ -182,14 +188,14 @@ func valUnique(v *Validator, param string) RulesFunc {
 			return fmt.Errorf("nama kolom tidak valid: %s", param)
 		}
 
-		if v.res.Database == nil {
+		if v.res.Database() == nil {
 			return errors.New("database tidak tersedia")
 		}
 
 		var found bool
 		var err error
 
-		builder := v.res.Database.Table(v.uniqueTable).Where("deleted_at IS NULL")
+		builder := v.res.Database().Table(v.uniqueTable).Where("deleted_at IS NULL")
 
 		if v.pkCol != "" && v.pkVal != nil && !reflect.ValueOf(v.pkVal).IsZero() {
 			if !validColumnNameRegex.MatchString(v.pkCol) {
@@ -659,4 +665,18 @@ func isEmpty(value any) bool {
 	}
 
 	return false
+}
+
+func toSnakeCaseLocal(in string) string {
+	runes := []rune(in)
+	length := len(runes)
+
+	var out []rune
+	for i := 0; i < length; i++ {
+		if i > 0 && (unicode.IsUpper(runes[i])) && ((i+1 < length && unicode.IsLower(runes[i+1])) || unicode.IsLower(runes[i-1])) {
+			out = append(out, '_')
+		}
+		out = append(out, unicode.ToLower(runes[i]))
+	}
+	return string(out)
 }

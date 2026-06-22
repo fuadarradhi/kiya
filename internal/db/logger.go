@@ -1,4 +1,4 @@
-package kiya
+package db
 
 import (
 	"context"
@@ -8,14 +8,18 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
 var reLogPlaceholder = regexp.MustCompile(`('(?:[^']|'')*')|(\?)`)
 
 type ctxKey string
 
+// RequestIDKey is the context key for request ID.
 const RequestIDKey ctxKey = "request_id"
 
+// QueryLog holds information about an executed query.
 type QueryLog struct {
 	Query     string
 	FullQuery string
@@ -26,6 +30,7 @@ type QueryLog struct {
 	Context   map[string]any
 }
 
+// QueryLogger interface for custom query loggers.
 type QueryLogger interface {
 	Log(q QueryLog)
 }
@@ -39,10 +44,15 @@ func (l *frameworkLogger) Log(q QueryLog) {
 	}
 
 	if q.Err != nil {
-		LogError("[DB] %s | Args: %v | Error: %v | Duration: %s", q.Query, q.Args, q.Err, q.Duration)
+		logger.LogError("[DB] %s | Args: %v | Error: %v | Duration: %s", q.Query, q.Args, q.Err, q.Duration)
 	} else {
-		LogInfo("[DB] %s | Rows: %d | Duration: %s", displayQuery, q.Rows, q.Duration)
+		logger.LogInfo("[DB] %s | Rows: %d | Duration: %s", displayQuery, q.Rows, q.Duration)
 	}
+}
+
+// FrameworkLogger returns the default framework query logger.
+func FrameworkLogger() QueryLogger {
+	return &frameworkLogger{}
 }
 
 type loggedTx struct {
@@ -114,9 +124,15 @@ func (t *loggedTx) Begin(ctx context.Context) (Tx, error) {
 func (t *loggedTx) Commit() error   { return t.inner.Commit() }
 func (t *loggedTx) Rollback() error { return t.inner.Rollback() }
 
+// LoggedExecutor wraps an Executor and logs all queries.
 type LoggedExecutor struct {
 	inner  Executor
 	logger QueryLogger
+}
+
+// NewLoggedExecutor creates a new LoggedExecutor.
+func NewLoggedExecutor(inner Executor, log QueryLogger) *LoggedExecutor {
+	return &LoggedExecutor{inner: inner, logger: log}
 }
 
 func interpolateQuery(query string, args []any) string {

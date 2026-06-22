@@ -1,11 +1,20 @@
-package kiya
+package router
 
 import (
 	"fmt"
 	"path"
 	"regexp"
 	"strings"
+	"sync"
+
+	"github.com/fuadarradhi/kiya/internal/logger"
 )
+
+// HandlerFunc defines the handler signature for the router tree.
+type HandlerFunc func(c any) error
+
+// Middleware defines a middleware signature.
+type Middleware func(HandlerFunc) HandlerFunc
 
 type nodeType uint8
 
@@ -25,21 +34,48 @@ type node struct {
 	handler   HandlerFunc
 }
 
-func (r *Router) addRoute(method, path string, h HandlerFunc) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// Param represents a URL parameter.
+type Param struct {
+	Key   string
+	Value string
+}
 
-	fullPath := cleanPath(r.prefix + path)
+// Tree holds the routing trees for different HTTP methods.
+type Tree struct {
+	roots      map[string]*node
+	middleware []Middleware
+	mu         sync.RWMutex
+}
 
-	if r.trees[method] == nil {
-		r.trees[method] = &node{}
+// NewTree creates a new routing tree.
+func NewTree(middleware []Middleware) *Tree {
+	return &Tree{
+		roots:      make(map[string]*node),
+		middleware: middleware,
+	}
+}
+
+// SetMiddleware updates the middleware chain for the tree.
+func (t *Tree) SetMiddleware(mws []Middleware) {
+	t.middleware = mws
+}
+
+// AddRoute registers a new route in the tree.
+func (t *Tree) AddRoute(method, path string, h HandlerFunc) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	fullPath := cleanPath(path)
+
+	if t.roots[method] == nil {
+		t.roots[method] = &node{}
 	}
 
-	current := r.trees[method]
+	current := t.roots[method]
 	segments := splitPath(fullPath)
 
 	if len(segments) == 0 {
-		current.handler = chain(h, r.middleware...)
+		current.handler = h
 		return
 	}
 
@@ -68,7 +104,7 @@ func (r *Router) addRoute(method, path string, h HandlerFunc) {
 				}
 
 				if isConflict {
-					LogError("ROUTE CONFLICT: Cannot register '%s'. Segment '%s' conflicts with existing '%s'.", fullPath, seg, c.part)
+					logger.LogError("ROUTE CONFLICT: Cannot register '%s'. Segment '%s' conflicts with existing '%s'.", fullPath, seg, c.part)
 					panic(fmt.Sprintf("route conflict: %s", fullPath))
 				}
 			}
@@ -80,29 +116,37 @@ func (r *Router) addRoute(method, path string, h HandlerFunc) {
 		current = child
 
 		if n.nType == wildcardNode {
-			current.handler = chain(h, r.middleware...)
+			current.handler = h
 			return
 		}
 
 		if i == len(segments)-1 {
-			current.handler = chain(h, r.middleware...)
+			current.handler = h
 		}
 	}
 }
 
-func (r *Router) findRoute(root *node, path string) (HandlerFunc, []param) {
+// FindRoute searches for a route and returns the handler and parameters.
+func (t *Tree) FindRoute(method, path string) (HandlerFunc, []Param) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	root := t.roots[method]
 	if root == nil {
 		return nil, nil
 	}
 
 	segments := splitPath(cleanPath(path))
-	var params []param
+	var params []Param
 
-	h := r.search(root, segments, &params)
-	return h, params
+	h := t.search(root, segments, &params)
+	if h != nil {
+		return chain(h, t.middleware...), params
+	}
+	return nil, params
 }
 
-func (r *Router) search(n *node, segments []string, params *[]param) HandlerFunc {
+func (t *Tree) search(n *node, segments []string, params *[]Param) HandlerFunc {
 	if len(segments) == 0 {
 		return n.handler
 	}
@@ -112,7 +156,7 @@ func (r *Router) search(n *node, segments []string, params *[]param) HandlerFunc
 
 	for _, c := range n.children {
 		if c.nType == static && c.part == seg {
-			if h := r.search(c, rest, params); h != nil {
+			if h := t.search(c, rest, params); h != nil {
 				return h
 			}
 		}
@@ -120,8 +164,8 @@ func (r *Router) search(n *node, segments []string, params *[]param) HandlerFunc
 
 	for _, c := range n.children {
 		if c.nType == regexNode && c.regex.MatchString(seg) {
-			*params = append(*params, param{c.paramName, seg})
-			if h := r.search(c, rest, params); h != nil {
+			*params = append(*params, Param{c.paramName, seg})
+			if h := t.search(c, rest, params); h != nil {
 				return h
 			}
 			*params = (*params)[:len(*params)-1]
@@ -130,8 +174,8 @@ func (r *Router) search(n *node, segments []string, params *[]param) HandlerFunc
 
 	for _, c := range n.children {
 		if c.nType == paramNode {
-			*params = append(*params, param{c.paramName, seg})
-			if h := r.search(c, rest, params); h != nil {
+			*params = append(*params, Param{c.paramName, seg})
+			if h := t.search(c, rest, params); h != nil {
 				return h
 			}
 			*params = (*params)[:len(*params)-1]
@@ -141,7 +185,7 @@ func (r *Router) search(n *node, segments []string, params *[]param) HandlerFunc
 	for _, c := range n.children {
 		if c.nType == wildcardNode {
 			val := strings.Join(segments, "/")
-			*params = append(*params, param{c.paramName, val})
+			*params = append(*params, Param{c.paramName, val})
 			return c.handler
 		}
 	}
@@ -149,15 +193,26 @@ func (r *Router) search(n *node, segments []string, params *[]param) HandlerFunc
 	return nil
 }
 
-func (r *Router) anyMethodExists(path string) bool {
-	for _, root := range r.trees {
+// AnyMethodExists checks if a path exists for any HTTP method.
+func (t *Tree) AnyMethodExists(path string) bool {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	for _, root := range t.roots {
 		if root != nil {
-			if h, _ := r.findRoute(root, path); h != nil {
+			if h, _ := t.findRouteInRoot(root, path); h != nil {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func (t *Tree) findRouteInRoot(root *node, path string) (HandlerFunc, []Param) {
+	segments := splitPath(cleanPath(path))
+	var params []Param
+	h := t.search(root, segments, &params)
+	return h, params
 }
 
 func chain(h HandlerFunc, m ...Middleware) HandlerFunc {
@@ -171,8 +226,8 @@ func chain(h HandlerFunc, m ...Middleware) HandlerFunc {
 		mw := m[i]
 		currentNext := next
 
-		next = func(c *Resources) error {
-			if c.aborted {
+		next = func(c any) error {
+			if ctx, ok := c.(interface{ IsAborted() bool }); ok && ctx.IsAborted() {
 				return nil
 			}
 			return mw(currentNext)(c)

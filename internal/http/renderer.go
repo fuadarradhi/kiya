@@ -1,4 +1,4 @@
-package kiya
+package http
 
 import (
 	"bytes"
@@ -170,6 +170,7 @@ func filterJSONEncode(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *po
 	return pongo2.AsValue(string(b)), nil
 }
 
+// EmbedLoader loads templates from an embedded filesystem.
 type EmbedLoader struct {
 	fs fs.FS
 }
@@ -198,12 +199,14 @@ func (l *EmbedLoader) Get(name string) (io.Reader, error) {
 	return bytes.NewReader(b), nil
 }
 
+// Renderer wraps a pongo2 template set.
 type Renderer struct {
 	set *pongo2.TemplateSet
 }
 
 var registerFiltersOnce sync.Once
 
+// NewRenderer creates a new Renderer from an embedded filesystem.
 func NewRenderer(embedFS fs.FS) *Renderer {
 	if embedFS == nil {
 		return nil
@@ -235,7 +238,8 @@ func NewRenderer(embedFS fs.FS) *Renderer {
 	}
 }
 
-func (r *Renderer) Render(w io.Writer, name string, data ...Map) error {
+// Render executes a template and writes to the provided writer.
+func (r *Renderer) Render(w io.Writer, name string, data ...map[string]any) error {
 	if r == nil {
 		return fmt.Errorf("renderer is not initialized")
 	}
@@ -297,7 +301,8 @@ func (r *Renderer) Render(w io.Writer, name string, data ...Map) error {
 	return tpl.ExecuteWriter(ctx, w)
 }
 
-func (r *Renderer) Output(name string, data ...Map) ([]byte, error) {
+// Output executes a template and returns the bytes.
+func (r *Renderer) Output(name string, data ...map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
 
 	if err := r.Render(&buf, name, data...); err != nil {

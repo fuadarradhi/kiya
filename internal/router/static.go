@@ -1,4 +1,4 @@
-package kiya
+package router
 
 import (
 	"errors"
@@ -7,41 +7,13 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 )
 
-func (r *Router) Static(prefix, root string) error {
-	if !strings.HasPrefix(prefix, "/") {
-		prefix = "/" + prefix
-	}
-	prefix = strings.TrimSuffix(prefix, "/")
-
-	sub, err := fs.Sub(os.DirFS(root), ".")
-	if err != nil {
-		return fmt.Errorf("failed to create static fs: %w", err)
-	}
-	return r.StaticFS(prefix, sub)
-}
-
-func (r *Router) StaticFS(prefix string, fsys fs.FS) error {
-	r.Get(prefix+"/{path:*}", func(c *Resources) error {
-		p := c.Param("path")
-		return serveStatic(c.Response, c.Request, fsys, p)
-	})
-	return nil
-}
-
-func (r *Router) Redirect(path, target string, code int) {
-	r.Get(path, func(c *Resources) error {
-		http.Redirect(c.Response, c.Request, target, code)
-		return nil
-	})
-}
-
-func serveStatic(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) error {
+// ServeStatic serves a static file from the provided filesystem.
+func ServeStatic(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) error {
 	name = path.Clean("/" + name)
 	name = strings.TrimPrefix(name, "/")
 

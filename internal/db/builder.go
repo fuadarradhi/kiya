@@ -1,4 +1,4 @@
-package kiya
+package db
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuadarradhi/kiya/internal/logger"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -30,6 +31,7 @@ type selectClause struct {
 	args []any
 }
 
+// Builder is the opaque struct for building SQL queries.
 type Builder struct {
 	table    string
 	selects  []selectClause
@@ -62,7 +64,7 @@ type Builder struct {
 	ctx      context.Context
 
 	dest             any
-	res              *Resources
+	res              any
 	defaultCondition DefaultConditionFunc
 
 	softDeleteCondition string
@@ -73,7 +75,7 @@ func (b *Builder) Bind(dest any) *Builder {
 	return b
 }
 
-func (b *Builder) SetResources(res *Resources) *Builder {
+func (b *Builder) SetResources(res any) *Builder {
 	b.res = res
 	return b
 }
@@ -111,7 +113,7 @@ func (b *Builder) Upsert(data any, updateCols ...string) (Result, error) {
 }
 
 func (b *Builder) WhereEq(col string, val any) *Builder {
-	safeCol := sanitizeIdentifier(col)
+	safeCol := SanitizeIdentifier(col)
 	if safeCol == "" {
 		return b
 	}
@@ -129,7 +131,7 @@ func (b *Builder) OrWhere(expr string, args ...any) *Builder {
 }
 
 func (b *Builder) WhereIn(col string, vals []any) *Builder {
-	safeCol := sanitizeIdentifier(col)
+	safeCol := SanitizeIdentifier(col)
 	if safeCol == "" {
 		return b
 	}
@@ -147,7 +149,7 @@ func (b *Builder) WhereIn(col string, vals []any) *Builder {
 }
 
 func (b *Builder) WhereNull(col string) *Builder {
-	safeCol := sanitizeIdentifier(col)
+	safeCol := SanitizeIdentifier(col)
 	if safeCol == "" {
 		return b
 	}
@@ -155,12 +157,12 @@ func (b *Builder) WhereNull(col string) *Builder {
 }
 
 func (b *Builder) Join(table, on string, typ string) *Builder {
-	safeTable := sanitizeIdentifier(table)
+	safeTable := SanitizeIdentifier(table)
 	if safeTable == "" {
 		return b
 	}
 
-	safeOn := sanitizeOnClause(on)
+	safeOn := SanitizeOnClause(on)
 
 	b.joins = append(b.joins, joinClause{typ: typ, table: safeTable, on: safeOn})
 	return b
@@ -180,7 +182,7 @@ func (b *Builder) InnerJoin(table, on string) *Builder {
 
 func (b *Builder) GroupBy(cols ...string) *Builder {
 	for i, c := range cols {
-		cols[i] = sanitizeIdentifier(c)
+		cols[i] = SanitizeIdentifier(c)
 	}
 	validCols := make([]string, 0, len(cols))
 	for _, c := range cols {
@@ -198,7 +200,7 @@ func (b *Builder) Having(expr string, args ...any) *Builder {
 }
 
 func (b *Builder) OrderBy(expr string) *Builder {
-	safeExpr := sanitizeOrderBy(expr)
+	safeExpr := SanitizeOrderBy(expr)
 	if safeExpr != "" {
 		b.orderBys = append(b.orderBys, safeExpr)
 	}
@@ -215,7 +217,7 @@ func (b *Builder) Offset(n int) *Builder {
 	return b
 }
 
-func (b *Builder) Clone() *Builder {
+func (b *Builder) clone() *Builder {
 	newB := *b
 
 	if b.selects != nil {
@@ -400,7 +402,7 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		}
 
 		for k, v := range m {
-			if sanitizeIdentifier(k) == "" {
+			if SanitizeIdentifier(k) == "" {
 				continue
 			}
 
@@ -449,7 +451,7 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		return nil, errors.New("insert data cannot be empty")
 	}
 
-	clone := b.Clone()
+	clone := b.clone()
 	clone.action = "insert"
 	clone.inserts = mapData
 
@@ -466,7 +468,7 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		if tableName == "" {
 			return nil, errors.New("table name is required")
 		}
-		clone.table = sanitizeIdentifier(tableName)
+		clone.table = SanitizeIdentifier(tableName)
 		if clone.table == "" {
 			return nil, errors.New("invalid table name inferred from model")
 		}
@@ -531,7 +533,7 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
 		}
 
 		for k, v := range m {
-			if sanitizeIdentifier(k) == "" {
+			if SanitizeIdentifier(k) == "" {
 				continue
 			}
 
@@ -565,7 +567,7 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
 		return nil, errors.New("update data cannot be empty")
 	}
 
-	clone := b.Clone()
+	clone := b.clone()
 	clone.action = "update"
 	clone.updates = mapData
 
@@ -573,7 +575,7 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
 		if tableName == "" {
 			return nil, errors.New("table name is required")
 		}
-		clone.table = sanitizeIdentifier(tableName)
+		clone.table = SanitizeIdentifier(tableName)
 		if clone.table == "" {
 			return nil, errors.New("invalid table name inferred from model")
 		}
@@ -609,7 +611,7 @@ func (b *Builder) execDelete(model any, skipWhereCheck bool) (Result, error) {
 		return nil, errors.New("delete requires where clause (safety check)")
 	}
 
-	clone := b.Clone()
+	clone := b.clone()
 	clone.action = "delete"
 
 	if model != nil {
@@ -619,7 +621,7 @@ func (b *Builder) execDelete(model any, skipWhereCheck bool) (Result, error) {
 		}
 
 		if clone.table == "" {
-			clone.table = sanitizeIdentifier(tblName)
+			clone.table = SanitizeIdentifier(tblName)
 			if clone.table == "" {
 				return nil, errors.New("invalid table name inferred from model")
 			}
@@ -665,7 +667,7 @@ func (b *Builder) Find(dest ...any) (bool, error) {
 		return false, errors.New("Find: destination is nil")
 	}
 
-	clone := b.Clone()
+	clone := b.clone()
 	clone.Limit(1)
 
 	val := reflect.ValueOf(d)
@@ -697,7 +699,7 @@ func (b *Builder) Find(dest ...any) (bool, error) {
 		}
 
 		if clone.table == "" {
-			clone.table = sanitizeIdentifier(info.defaultName)
+			clone.table = SanitizeIdentifier(info.defaultName)
 		}
 	} else {
 		if clone.table == "" {
@@ -705,7 +707,7 @@ func (b *Builder) Find(dest ...any) (bool, error) {
 			if err != nil {
 				return false, fmt.Errorf("Find: %v", err)
 			}
-			clone.table = sanitizeIdentifier(tblName)
+			clone.table = SanitizeIdentifier(tblName)
 		}
 	}
 
@@ -739,7 +741,7 @@ func (b *Builder) FindAll(dest ...any) error {
 		return errors.New("FindAll: destination is nil")
 	}
 
-	clone := b.Clone()
+	clone := b.clone()
 
 	sliceVal := reflect.ValueOf(d)
 	if sliceVal.Kind() != reflect.Ptr || sliceVal.Elem().Kind() != reflect.Slice {
@@ -748,7 +750,7 @@ func (b *Builder) FindAll(dest ...any) error {
 			if err != nil {
 				return fmt.Errorf("FindAll: %v", err)
 			}
-			clone.table = sanitizeIdentifier(tblName)
+			clone.table = SanitizeIdentifier(tblName)
 		}
 	} else {
 		typ := sliceVal.Elem().Type().Elem()
@@ -769,7 +771,7 @@ func (b *Builder) FindAll(dest ...any) error {
 			}
 
 			if clone.table == "" {
-				clone.table = sanitizeIdentifier(info.defaultName)
+				clone.table = SanitizeIdentifier(info.defaultName)
 			}
 		}
 	}
@@ -785,7 +787,7 @@ func (b *Builder) FindAll(dest ...any) error {
 func (b *Builder) Count() (int64, error) {
 	b.applyDefaultCondition()
 
-	clone := b.Clone()
+	clone := b.clone()
 	clone.selects = nil
 	clone.Cols("COUNT(*)")
 
@@ -802,7 +804,7 @@ func (b *Builder) Count() (int64, error) {
 func (b *Builder) Exist() (bool, error) {
 	b.applyDefaultCondition()
 
-	clone := b.Clone()
+	clone := b.clone()
 	clone.selects = nil
 	clone.Cols("1")
 	clone.Limit(1)
@@ -825,7 +827,7 @@ func (b *Builder) Exist() (bool, error) {
 }
 
 func (b *Builder) Exec() (Result, error) {
-	clone := b.Clone()
+	clone := b.clone()
 	query, args := clone.Build()
 	res, err := clone.executor.Exec(clone.ctx, query, args...)
 	return res, err
@@ -854,7 +856,7 @@ func (b *Builder) buildRaw() (string, []any) {
 	if b.namedArgs != nil && b.rawQuery != "" {
 		query, args, err := sqlx.Named(b.rawQuery, b.namedArgs)
 		if err != nil {
-			LogError("[DB] Named query error: %v", err)
+			logger.LogError("[DB] Named query error: %v", err)
 			return b.rawQuery, nil
 		}
 		return query, args
@@ -879,4 +881,211 @@ func (b *Builder) buildRaw() (string, []any) {
 	}
 
 	return sql.String(), b.args
+}
+
+func (b *Builder) buildSelect(sql *strings.Builder) {
+	sql.WriteString("SELECT ")
+	if len(b.selects) > 0 {
+		for i, s := range b.selects {
+			if i > 0 {
+				sql.WriteString(", ")
+			}
+			sql.WriteString(s.expr)
+			if len(s.args) > 0 {
+				b.args = append(b.args, s.args...)
+			}
+		}
+	} else {
+		sql.WriteString("*")
+	}
+
+	if b.table == "" {
+		sql.WriteString(" FROM undefined_table ")
+		logger.LogError("[DB] Build select without table name")
+	} else {
+		sql.WriteString(" FROM " + b.table)
+	}
+
+	for _, j := range b.joins {
+		sql.WriteString(fmt.Sprintf(" %s JOIN %s ON %s", j.typ, j.table, j.on))
+	}
+
+	b.buildWheres(sql)
+
+	if len(b.groupBys) > 0 {
+		sql.WriteString(" GROUP BY " + strings.Join(b.groupBys, ", "))
+	}
+
+	if len(b.havings) > 0 {
+		sql.WriteString(" HAVING ")
+		for i, h := range b.havings {
+			if i > 0 {
+				sql.WriteString(" " + h.boolean + " ")
+			}
+			sql.WriteString(h.expr)
+			b.args = append(b.args, h.args...)
+		}
+	}
+
+	if len(b.orderBys) > 0 {
+		sql.WriteString(" ORDER BY " + strings.Join(b.orderBys, ", "))
+	}
+
+	if b.limit != nil {
+		sql.WriteString(" LIMIT ?")
+		b.args = append(b.args, *b.limit)
+	}
+
+	if b.offset != nil {
+		sql.WriteString(" OFFSET ?")
+		b.args = append(b.args, *b.offset)
+	}
+}
+
+func (b *Builder) buildInsert(sql *strings.Builder) {
+	var cols []string
+	var placeholders []string
+
+	keys := make([]string, 0, len(b.inserts))
+	for k := range b.inserts {
+		if SanitizeIdentifier(k) == "" {
+			logger.LogError("[DB Security] Invalid column name in insert map: %s", k)
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		safeCol := SanitizeIdentifier(k)
+		cols = append(cols, safeCol)
+		placeholders = append(placeholders, "?")
+		b.args = append(b.args, b.inserts[k])
+	}
+
+	if len(cols) == 0 {
+		logger.LogError("[DB] Build insert with no valid columns")
+		return
+	}
+
+	sql.WriteString(fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", b.table, strings.Join(cols, ", "), strings.Join(placeholders, ", ")))
+
+	if len(b.onDuplicateUpdateCols) > 0 {
+		if b.dialect.Name() == "mysql" {
+			var updates []string
+			for _, col := range b.onDuplicateUpdateCols {
+				safeCol := SanitizeIdentifier(col)
+				if safeCol != "" {
+					updates = append(updates, fmt.Sprintf("%s = VALUES(%s)", safeCol, safeCol))
+				}
+			}
+			if len(updates) > 0 {
+				sql.WriteString(" ON DUPLICATE KEY UPDATE ")
+				sql.WriteString(strings.Join(updates, ", "))
+			}
+		} else if b.dialect.Name() == "postgres" {
+			var updates []string
+			for _, col := range b.onDuplicateUpdateCols {
+				safeCol := SanitizeIdentifier(col)
+				if safeCol != "" {
+					updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", safeCol, safeCol))
+				}
+			}
+			if len(updates) > 0 {
+				conflictCols := "id"
+				if len(b.primaryKeys) > 0 {
+					conflictCols = strings.Join(b.primaryKeys, ", ")
+				}
+				sql.WriteString(fmt.Sprintf(" ON CONFLICT (%s) DO UPDATE SET ", conflictCols))
+				sql.WriteString(strings.Join(updates, ", "))
+			}
+		} else {
+			logger.LogWarn("[DB] Upsert ON DUPLICATE KEY UPDATE / ON CONFLICT is only supported for MySQL and PostgreSQL dialects.")
+		}
+	}
+
+	if b.autoIncCol != "" && b.dialect.Name() == "postgres" {
+		sql.WriteString(fmt.Sprintf(" RETURNING %s", SanitizeIdentifier(b.autoIncCol)))
+	}
+}
+
+func (b *Builder) buildUpdate(sql *strings.Builder) {
+	var sets []string
+
+	keys := make([]string, 0, len(b.updates))
+	for k := range b.updates {
+		if SanitizeIdentifier(k) == "" {
+			logger.LogError("[DB Security] Invalid column name in update map: %s", k)
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		safeCol := SanitizeIdentifier(k)
+		sets = append(sets, fmt.Sprintf("%s = ?", safeCol))
+		b.args = append(b.args, b.updates[k])
+	}
+
+	if len(sets) == 0 {
+		logger.LogError("[DB] Build update with no valid columns")
+		return
+	}
+
+	sql.WriteString(fmt.Sprintf("UPDATE %s SET %s", b.table, strings.Join(sets, ", ")))
+	b.buildWheres(sql)
+}
+
+func (b *Builder) buildDelete(sql *strings.Builder) {
+	sql.WriteString("DELETE FROM " + b.table)
+	b.buildWheres(sql)
+}
+
+func (b *Builder) buildWheres(sql *strings.Builder) {
+	if len(b.wheres) == 0 && b.softDeleteCondition == "" {
+		return
+	}
+
+	sql.WriteString(" WHERE ")
+
+	if b.softDeleteCondition != "" {
+		sql.WriteString(b.softDeleteCondition)
+
+		if len(b.wheres) > 0 {
+			hasOr := false
+			for _, w := range b.wheres {
+				if w.boolean == "OR" {
+					hasOr = true
+					break
+				}
+			}
+
+			if hasOr {
+				sql.WriteString(" AND (")
+				for i, w := range b.wheres {
+					if i > 0 {
+						sql.WriteString(" " + w.boolean + " ")
+					}
+					sql.WriteString(w.expr)
+					b.args = append(b.args, w.args...)
+				}
+				sql.WriteString(")")
+			} else {
+				for _, w := range b.wheres {
+					sql.WriteString(" AND ")
+					sql.WriteString(w.expr)
+					b.args = append(b.args, w.args...)
+				}
+			}
+		}
+	} else {
+		for i, w := range b.wheres {
+			if i > 0 {
+				sql.WriteString(" " + w.boolean + " ")
+			}
+			sql.WriteString(w.expr)
+			b.args = append(b.args, w.args...)
+		}
+	}
 }

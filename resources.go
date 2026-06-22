@@ -6,20 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"reflect"
 	"strings"
 	"time"
+
+	khttp "github.com/fuadarradhi/kiya/internal/http"
+	"github.com/fuadarradhi/kiya/internal/router"
 )
 
+// Map is a shortcut for map[string]any
 type Map = map[string]any
 
-type param struct {
-	key   string
-	value string
-}
-
+// JsonData defines the standard JSON response structure.
 type JsonData struct {
 	Status  int                 `json:"status"`
 	Message string              `json:"message"`
@@ -27,16 +28,18 @@ type JsonData struct {
 	Data    any                 `json:"data"`
 }
 
-const maxMultipartMemory int64 = 10 << 20
-
+// Resources is the context for each HTTP request.
+// All fields are unexported to prevent external modification.
 type Resources struct {
-	Response    http.ResponseWriter
-	Request     *http.Request
-	Session     *Session
-	Database    *DB
-	params      []param
-	Globals     *Globals
-	renderer    *Renderer
+	_ [0]func() // Prevents struct literal construction
+
+	response    http.ResponseWriter
+	request     *http.Request
+	session     *Session
+	database    *DB
+	params      []router.Param
+	globals     *Globals
+	renderer    *khttp.Renderer
 	written     bool
 	aborted     bool
 	body        []byte
@@ -44,11 +47,18 @@ type Resources struct {
 	csrfEnabled bool
 }
 
-func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *Renderer) {
-	r.Response = w
-	r.Request = req
-	r.Session = nil
-	r.Database = nil
+// Getters
+func (r *Resources) Response() http.ResponseWriter { return r.response }
+func (r *Resources) Request() *http.Request        { return r.request }
+func (r *Resources) Session() *Session             { return r.session }
+func (r *Resources) Database() *DB                 { return r.database }
+func (r *Resources) Globals() *Globals             { return r.globals }
+
+func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *khttp.Renderer) {
+	r.response = w
+	r.request = req
+	r.session = nil
+	r.database = nil
 	r.renderer = renderer
 	r.params = r.params[:0]
 	r.aborted = false
@@ -56,17 +66,18 @@ func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *Re
 	r.encryptKey = nil
 	r.csrfEnabled = false
 
-	if r.Globals == nil {
-		r.Globals = &Globals{
+	if r.globals == nil {
+		r.globals = &Globals{
 			store: make(map[string]any),
 		}
 	} else {
-		r.Globals.Clear()
+		r.globals.Clear()
 	}
 
 	r.written = false
 }
 
+// Model initializes a new model instance and binds it to the resources.
 func Model[T any](res *Resources) *T {
 	instance := new(T)
 
@@ -77,7 +88,7 @@ func Model[T any](res *Resources) *T {
 		initMethod := bmField.Addr().MethodByName("Init")
 		if initMethod.IsValid() {
 			args := []reflect.Value{
-				reflect.ValueOf(res.Database),
+				reflect.ValueOf(res.Database()),
 				reflect.ValueOf(res),
 				reflect.ValueOf(instance),
 			}
@@ -88,41 +99,13 @@ func Model[T any](res *Resources) *T {
 	return instance
 }
 
-func (r *Resources) Model(model any) any {
-	if model == nil {
-		return nil
-	}
-
-	val := reflect.ValueOf(model)
-
-	if val.Kind() != reflect.Ptr {
-		return model
-	}
-
-	if val.Elem().Kind() == reflect.Struct {
-		elem := val.Elem()
-		bmField := elem.FieldByName("BaseModel")
-
-		if bmField.IsValid() && bmField.Kind() == reflect.Struct {
-			if bmField.CanAddr() {
-				initMethod := bmField.Addr().MethodByName("Init")
-				if initMethod.IsValid() {
-					args := []reflect.Value{
-						reflect.ValueOf(r.Database),
-						reflect.ValueOf(r),
-						reflect.ValueOf(model),
-					}
-					initMethod.Call(args)
-				}
-			}
-		}
-	}
-
-	return model
-}
-
 func (r *Resources) Abort() {
 	r.aborted = true
+}
+
+// IsAborted checks if the request was aborted.
+func (r *Resources) IsAborted() bool {
+	return r.aborted
 }
 
 func (r *Resources) AbortWithStatus(code int) {
@@ -132,59 +115,47 @@ func (r *Resources) AbortWithStatus(code int) {
 
 func (r *Resources) Status(code int) *Resources {
 	if !r.written {
-		if r.Session != nil {
-			if err := r.Session.Save(); err != nil {
+		if r.session != nil {
+			if err := r.session.Save(); err != nil {
 				LogError("Session Save Error before WriteHeader: %v", err)
 			}
 		}
-		r.Response.WriteHeader(code)
+		r.response.WriteHeader(code)
 		r.written = true
 	}
 	return r
 }
 
-func (r *Resources) LogInfo(format string, v ...any) {
-	LogInfo(format, v...)
-}
-
-func (r *Resources) LogWarn(format string, v ...any) {
-	LogWarn(format, v...)
-}
-
-func (r *Resources) LogError(format string, v ...any) {
-	LogError(format, v...)
-}
-
 func (r *Resources) String(code int, s string) error {
-	r.Response.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	r.response.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	r.Status(code)
-	_, err := io.WriteString(r.Response, s)
+	_, err := io.WriteString(r.response, s)
 	return err
 }
 
 func (r *Resources) JSON(code int, obj any) error {
-	r.Response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	r.response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	r.Status(code)
-	return json.NewEncoder(r.Response).Encode(obj)
+	return json.NewEncoder(r.response).Encode(obj)
 }
 
-func (r *Resources) Json(code int, message string, errors map[string][]string, data any) error {
+func (r *Resources) Json(code int, message string, errs map[string][]string, data any) error {
 	if data == nil {
 		data = []string{}
 	}
 
-	if errors == nil {
-		errors = make(map[string][]string)
+	if errs == nil {
+		errs = make(map[string][]string)
 	}
 
 	j := JsonData{
 		Status:  code,
 		Message: message,
-		Errors:  errors,
+		Errors:  errs,
 		Data:    data,
 	}
 
-	r.Response.Header().Set("Content-Type", "application/json; charset=utf-8")
+	r.response.Header().Set("Content-Type", "application/json; charset=utf-8")
 	r.Status(code)
 
 	out, err := json.Marshal(j)
@@ -192,7 +163,7 @@ func (r *Resources) Json(code int, message string, errors map[string][]string, d
 		return err
 	}
 
-	_, err = r.Response.Write(out)
+	_, err = r.response.Write(out)
 	return err
 }
 
@@ -230,7 +201,7 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 	}
 
 	if _, exists := ctx["Request"]; !exists {
-		ctx["Request"] = r.Request
+		ctx["Request"] = r.request
 	}
 
 	if len(r.encryptKey) > 0 {
@@ -239,7 +210,7 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 
 	var csrfToken string
 	if r.csrfEnabled && len(r.encryptKey) > 0 {
-		if token, err := r.GenerateCSRFToken(); err == nil {
+		if token, err := khttp.GenerateCSRFToken(r.session, r.encryptKey); err == nil {
 			csrfToken = token
 			ctx["csrf_token"] = csrfToken
 		}
@@ -250,13 +221,13 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 		return err
 	}
 
-	html := buf.String()
+	htmlStr := buf.String()
 	if csrfToken != "" {
-		html = injectCSRFIntoForms(html, csrfToken)
-		html = injectCSRFMeta(html, csrfToken)
+		htmlStr = khttp.InjectCSRFIntoForms(htmlStr, csrfToken)
+		htmlStr = khttp.InjectCSRFMeta(htmlStr, csrfToken)
 	}
 
-	_, err := io.WriteString(r.Response, html)
+	_, err := io.WriteString(r.response, htmlStr)
 	return err
 }
 
@@ -265,13 +236,13 @@ func (r *Resources) Redirect(code int, redirectURL string) error {
 		return errors.New("redirect status code must be 3xx (300-399)")
 	}
 
-	if r.Session != nil {
-		if err := r.Session.Save(); err != nil {
+	if r.session != nil {
+		if err := r.session.Save(); err != nil {
 			return err
 		}
 	}
 
-	http.Redirect(r.Response, r.Request, redirectURL, code)
+	http.Redirect(r.response, r.request, redirectURL, code)
 
 	r.written = true
 	return nil
@@ -282,8 +253,8 @@ func (r *Resources) RedirectWithQuery(code int, to string, queryParams Map) erro
 		return errors.New("redirect status code must be 3xx (300-399)")
 	}
 
-	if r.Session != nil {
-		if err := r.Session.Save(); err != nil {
+	if r.session != nil {
+		if err := r.session.Save(); err != nil {
 			return err
 		}
 	}
@@ -301,7 +272,7 @@ func (r *Resources) RedirectWithQuery(code int, to string, queryParams Map) erro
 
 	parsedURL.RawQuery = query.Encode()
 
-	http.Redirect(r.Response, r.Request, parsedURL.String(), code)
+	http.Redirect(r.response, r.request, parsedURL.String(), code)
 	r.written = true
 	return nil
 }
@@ -311,8 +282,8 @@ func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map)
 		return errors.New("redirect status code must be 3xx (300-399)")
 	}
 
-	if r.Session != nil {
-		if err := r.Session.Save(); err != nil {
+	if r.session != nil {
+		if err := r.session.Save(); err != nil {
 			return err
 		}
 	}
@@ -322,7 +293,7 @@ func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map)
 		return err
 	}
 
-	query := r.Request.URL.Query()
+	query := r.request.URL.Query()
 
 	if len(queryParams) > 0 {
 		for _, params := range queryParams {
@@ -334,12 +305,116 @@ func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map)
 
 	parsedURL.RawQuery = query.Encode()
 
-	http.Redirect(r.Response, r.Request, parsedURL.String(), code)
+	http.Redirect(r.response, r.request, parsedURL.String(), code)
 	r.written = true
 	return nil
 }
 
-// Digunakan oleh Redirect functions
+// HTTP Helpers Delegation
+func (r *Resources) Param(key string) string {
+	for _, p := range r.params {
+		if p.Key == key {
+			return p.Value
+		}
+	}
+	return ""
+}
+
+func (r *Resources) Get(key string) string {
+	return khttp.Get(r.request, key)
+}
+
+func (r *Resources) Post(key string) string {
+	return khttp.Post(r.request, key)
+}
+
+func (r *Resources) GetPost(key string) string {
+	return khttp.GetPost(r.request, key)
+}
+
+func (r *Resources) PostGet(key string) string {
+	return khttp.PostGet(r.request, key)
+}
+
+func (r *Resources) IsAJAX() bool {
+	return khttp.IsAJAX(r.request)
+}
+
+func (r *Resources) GetBody() ([]byte, error) {
+	b, err := khttp.GetBody(r.response, r.request, r.body)
+	if err != nil {
+		return nil, err
+	}
+	r.body = b
+	return b, nil
+}
+
+func (r *Resources) BindJSON(v any) error {
+	body, err := r.GetBody()
+	if err != nil {
+		return err
+	}
+	return khttp.BindJSON(body, v)
+}
+
+func (r *Resources) Bind(v any) error {
+	b, err := khttp.Bind(r.response, r.request, r.body, v)
+	if err != nil {
+		return err
+	}
+	r.body = b
+	return nil
+}
+
+func (r *Resources) Validator(val any, bind ...bool) *Validator {
+	v := &Validator{
+		res: r,
+	}
+
+	if val != nil {
+		v.Bind(val, bind...)
+	}
+
+	return v
+}
+
+func (r *Resources) File(key string) (*multipart.FileHeader, error) {
+	return khttp.File(r.request, key)
+}
+
+func (r *Resources) SaveFile(key string, dst string) error {
+	return khttp.SaveFile(r.request, key, dst)
+}
+
+func (r *Resources) Encrypt(plaintext []byte) (string, error) {
+	return khttp.Encrypt(plaintext, r.encryptKey)
+}
+
+func (r *Resources) Decrypt(encoded string) ([]byte, error) {
+	return khttp.Decrypt(encoded, r.encryptKey)
+}
+
+func (r *Resources) EncryptString(plaintext string) (string, error) {
+	return khttp.EncryptString(plaintext, r.encryptKey)
+}
+
+func (r *Resources) DecryptString(encoded string) (string, error) {
+	return khttp.DecryptString(encoded, r.encryptKey)
+}
+
+func (r *Resources) GenerateCSRFToken() (string, error) {
+	return khttp.GenerateCSRFToken(r.session, r.encryptKey)
+}
+
+func (r *Resources) VerifyCSRFToken(token string) bool {
+	return khttp.VerifyCSRFToken(token, r.session, r.encryptKey)
+}
+
+func (r *Resources) ExtractIP() string {
+	return khttp.ExtractIP(r.request)
+}
+
+// isValidRedirectCode checks if the code is a valid 3xx redirect code.
 func isValidRedirectCode(code int) bool {
 	return code >= 300 && code <= 399
 }
