@@ -2,23 +2,13 @@ package kiya
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"mime/multipart"
-	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"reflect"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -54,12 +44,6 @@ type Resources struct {
 	csrfEnabled bool
 }
 
-var (
-	reFormTag    = regexp.MustCompile(`(?i)<form\b[^>]*>`)
-	reMethodAttr = regexp.MustCompile(`(?i)method\s*=\s*["']?\s*(\w+)`)
-	reHeadTag    = regexp.MustCompile(`(?i)<head\b[^>]*>`)
-)
-
 func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *Renderer) {
 	r.Response = w
 	r.Request = req
@@ -81,28 +65,6 @@ func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *Re
 	}
 
 	r.written = false
-}
-
-func (r *Resources) GetBody() ([]byte, error) {
-	if r.body != nil {
-		r.Request.Body = io.NopCloser(bytes.NewReader(r.body))
-		return r.body, nil
-	}
-
-	if r.Request.Body == nil {
-		return []byte{}, nil
-	}
-
-	limitedReader := http.MaxBytesReader(r.Response, r.Request.Body, 10<<20)
-	b, err := io.ReadAll(limitedReader)
-	if err != nil {
-		return nil, err
-	}
-
-	r.body = b
-	r.Request.Body = io.NopCloser(bytes.NewReader(b))
-
-	return b, nil
 }
 
 func Model[T any](res *Resources) *T {
@@ -157,56 +119,6 @@ func (r *Resources) Model(model any) any {
 	}
 
 	return model
-}
-
-func (r *Resources) Param(key string) string {
-	for _, p := range r.params {
-		if p.key == key {
-			return p.value
-		}
-	}
-	return ""
-}
-
-func (r *Resources) Get(key string) string {
-	return r.Request.URL.Query().Get(key)
-}
-
-func (r *Resources) Post(key string) string {
-	if r.Request.PostForm == nil {
-		r.Request.ParseMultipartForm(maxMultipartMemory)
-	}
-	return r.Request.PostForm.Get(key)
-}
-
-func (r *Resources) GetPost(key string) string {
-	val := r.Request.URL.Query().Get(key)
-	if val != "" {
-		return val
-	}
-
-	if r.Request.PostForm == nil {
-		r.Request.ParseMultipartForm(maxMultipartMemory)
-	}
-	return r.Request.PostForm.Get(key)
-}
-
-func (r *Resources) PostGet(key string) string {
-	if r.Request.PostForm == nil {
-		r.Request.ParseMultipartForm(maxMultipartMemory)
-	}
-	val := r.Request.PostForm.Get(key)
-	if val != "" {
-		return val
-	}
-
-	return r.Request.URL.Query().Get(key)
-}
-
-func (r *Resources) IsAJAX() bool {
-	return strings.Contains(r.Request.Header.Get("Accept"), "application/json") ||
-		strings.Contains(r.Request.Header.Get("Content-Type"), "application/json") ||
-		r.Request.Header.Get("X-Requested-With") == "XMLHttpRequest"
 }
 
 func (r *Resources) Abort() {
@@ -284,17 +196,6 @@ func (r *Resources) Json(code int, message string, errors map[string][]string, d
 	return err
 }
 
-func (r *Resources) BindJSON(v any) error {
-	body, err := r.GetBody()
-	if err != nil {
-		return err
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	decoder.DisallowUnknownFields()
-	return decoder.Decode(v)
-}
-
 func (r *Resources) Render(code int, name string, data ...Map) error {
 	r.Status(code)
 	if r.renderer == nil {
@@ -356,99 +257,6 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 	}
 
 	_, err := io.WriteString(r.Response, html)
-	return err
-}
-
-func (r *Resources) Bind(v any) error {
-	if _, err := r.GetBody(); err != nil {
-		return err
-	}
-
-	ct := r.Request.Header.Get("Content-Type")
-
-	if strings.Contains(ct, "application/json") {
-		return r.BindJSON(v)
-	}
-
-	if strings.Contains(ct, "multipart/form-data") {
-		if err := r.Request.ParseMultipartForm(maxMultipartMemory); err != nil {
-			return err
-		}
-	} else {
-		if err := r.Request.ParseForm(); err != nil {
-			return err
-		}
-	}
-
-	return formDecoder.Decode(v, r.Request.PostForm)
-}
-
-func (r *Resources) Validator(val any, bind ...bool) *Validator {
-	v := &Validator{
-		res: r,
-	}
-
-	if val != nil {
-		v.Bind(val, bind...)
-	}
-
-	return v
-}
-
-func (r *Resources) File(key string) (*multipart.FileHeader, error) {
-	if r.Request.MultipartForm == nil {
-		if err := r.Request.ParseMultipartForm(maxMultipartMemory); err != nil {
-			return nil, err
-		}
-	}
-	_, fh, err := r.Request.FormFile(key)
-	if err != nil {
-		return nil, err
-	}
-	return fh, nil
-}
-
-func (r *Resources) SaveFile(key string, dstPath string) error {
-	cleanPath := filepath.Clean(dstPath)
-
-	if filepath.IsAbs(cleanPath) {
-		return errors.New("invalid destination path: absolute paths are not allowed")
-	}
-
-	if strings.Contains(cleanPath, "..") {
-		return errors.New("invalid destination path: path traversal detected")
-	}
-
-	if strings.ContainsAny(cleanPath, "\x00") {
-		return errors.New("invalid destination path: null character detected")
-	}
-
-	if r.Request.MultipartForm == nil {
-		if err := r.Request.ParseMultipartForm(maxMultipartMemory); err != nil {
-			return err
-		}
-	}
-
-	src, _, err := r.Request.FormFile(key)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	if err := os.MkdirAll(filepath.Dir(cleanPath), 0755); err != nil {
-		return err
-	}
-
-	dst, err := os.OpenFile(cleanPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
-	if err != nil {
-		if os.IsExist(err) {
-			return errors.New("file already exists")
-		}
-		return err
-	}
-	defer dst.Close()
-
-	_, err = io.Copy(dst, src)
 	return err
 }
 
@@ -531,219 +339,84 @@ func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map)
 	return nil
 }
 
-func (r *Resources) Encrypt(plaintext []byte) (string, error) {
-	if len(r.encryptKey) == 0 {
-		return "", fmt.Errorf("encryption key not configured")
-	}
-
-	block, err := aes.NewCipher(r.encryptKey)
-	if err != nil {
-		return "", fmt.Errorf("create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("create GCM: %w", err)
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", fmt.Errorf("generate nonce: %w", err)
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-
-	return base64.RawURLEncoding.EncodeToString(ciphertext), nil
+// Digunakan oleh Redirect functions
+func isValidRedirectCode(code int) bool {
+	return code >= 300 && code <= 399
 }
 
-func (r *Resources) Decrypt(encoded string) ([]byte, error) {
-	if len(r.encryptKey) == 0 {
-		return nil, fmt.Errorf("encryption key not configured")
+func sanitizeForJSON(v any) any {
+	if v == nil {
+		return nil
 	}
 
-	data, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return nil, fmt.Errorf("decode base64url: %w", err)
+	rv := reflect.ValueOf(v)
+
+	for (rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface) && !rv.IsNil() {
+		rv = rv.Elem()
 	}
 
-	block, err := aes.NewCipher(r.encryptKey)
-	if err != nil {
-		return nil, fmt.Errorf("create cipher: %w", err)
-	}
-
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, fmt.Errorf("create GCM: %w", err)
-	}
-
-	nonceSize := gcm.NonceSize()
-	if len(data) < nonceSize {
-		return nil, fmt.Errorf("ciphertext too short")
-	}
-
-	nonce := data[:nonceSize]
-	ciphertextWithTag := data[nonceSize:]
-
-	plaintext, err := gcm.Open(nil, nonce, ciphertextWithTag, nil)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt: %w", err)
-	}
-
-	return plaintext, nil
-}
-
-func (r *Resources) EncryptString(plaintext string) (string, error) {
-	return r.Encrypt([]byte(plaintext))
-}
-
-func (r *Resources) DecryptString(encoded string) (string, error) {
-	plaintext, err := r.Decrypt(encoded)
-	if err != nil {
-		return "", err
-	}
-	return string(plaintext), nil
-}
-
-func (r *Resources) GenerateCSRFToken() (string, error) {
-	if len(r.encryptKey) == 0 {
-		return "", fmt.Errorf("encryption key not configured")
-	}
-	if r.Session == nil {
-		return "", fmt.Errorf("session not available")
-	}
-
-	sessionID := r.Session.ID()
-	if sessionID == "" {
-		sessionID = fmt.Sprintf("%v", r.Session.Get("_t"))
-	}
-
-	timestamp := time.Now().Unix()
-	plaintext := fmt.Sprintf("%s|%d", sessionID, timestamp)
-	return r.EncryptString(plaintext)
-}
-
-func (r *Resources) VerifyCSRFToken(token string) bool {
-	if len(r.encryptKey) == 0 || token == "" {
-		return false
-	}
-	if r.Session == nil {
-		return false
-	}
-
-	plaintext, err := r.DecryptString(token)
-	if err != nil {
-		return false
-	}
-
-	parts := strings.SplitN(plaintext, "|", 2)
-	if len(parts) != 2 {
-		return false
-	}
-
-	tokenSessionID := parts[0]
-	timestampStr := parts[1]
-
-	currentSessionID := r.Session.ID()
-	if currentSessionID == "" {
-		currentSessionID = fmt.Sprintf("%v", r.Session.Get("_t"))
-	}
-
-	if tokenSessionID != currentSessionID {
-		return false
-	}
-
-	timestamp, err := strconv.ParseInt(timestampStr, 10, 64)
-	if err != nil {
-		return false
-	}
-
-	now := time.Now().Unix()
-	elapsed := now - timestamp
-	if elapsed < 0 || elapsed > 7200 {
-		return false
-	}
-
-	return true
-}
-
-func (r *Resources) ExtractIP() string {
-	if r.Request == nil {
-		return ""
-	}
-
-	remoteIP, _, err := net.SplitHostPort(r.Request.RemoteAddr)
-	if err != nil {
-		remoteIP = r.Request.RemoteAddr
-	}
-
-	if isPrivateIP(remoteIP) {
-		if xff := r.Request.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			for i := len(parts) - 1; i >= 0; i-- {
-				ip := strings.TrimSpace(parts[i])
-				if ip != "" {
-					return ip
+	switch rv.Kind() {
+	case reflect.Invalid:
+		return nil
+	case reflect.Bool,
+		reflect.String,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return rv.Interface()
+	case reflect.Map:
+		if rv.IsNil() {
+			return nil
+		}
+		result := make(map[string]any)
+		iter := rv.MapRange()
+		for iter.Next() {
+			key := fmt.Sprintf("%v", iter.Key().Interface())
+			result[key] = sanitizeForJSON(iter.Value().Interface())
+		}
+		return result
+	case reflect.Slice, reflect.Array:
+		if rv.Kind() == reflect.Slice && rv.IsNil() {
+			return nil
+		}
+		result := make([]any, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			result[i] = sanitizeForJSON(rv.Index(i).Interface())
+		}
+		return result
+	case reflect.Struct:
+		if t, ok := rv.Interface().(time.Time); ok {
+			if t.IsZero() {
+				return nil
+			}
+			return t.Format(time.RFC3339)
+		}
+		result := make(map[string]any)
+		rt := rv.Type()
+		for i := 0; i < rv.NumField(); i++ {
+			field := rt.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			jsonTag := field.Tag.Get("json")
+			if jsonTag == "-" {
+				continue
+			}
+			fieldName := field.Name
+			if jsonTag != "" {
+				parts := strings.Split(jsonTag, ",")
+				if len(parts) > 0 && parts[0] != "" && parts[0] != "-" {
+					fieldName = parts[0]
 				}
 			}
+			if rv.Field(i).CanInterface() {
+				result[fieldName] = sanitizeForJSON(rv.Field(i).Interface())
+			}
 		}
-
-		if xri := r.Request.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
+		return result
+	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
+		return nil
+	default:
+		return nil
 	}
-
-	return remoteIP
-}
-
-func injectCSRFIntoForms(html string, token string) string {
-	if token == "" {
-		return html
-	}
-
-	if strings.Contains(html, `name="csrf_token"`) ||
-		strings.Contains(html, `name='csrf_token'`) {
-		return html
-	}
-
-	escapedToken := htmlEscape(token)
-	csrfInput := fmt.Sprintf(
-		`<input type="hidden" name="csrf_token" value="%s">`,
-		escapedToken,
-	)
-
-	return reFormTag.ReplaceAllStringFunc(html, func(match string) string {
-		methodMatches := reMethodAttr.FindStringSubmatch(match)
-
-		method := "GET"
-		if len(methodMatches) >= 2 && methodMatches[1] != "" {
-			method = strings.ToUpper(methodMatches[1])
-		}
-
-		if method == "GET" {
-			return match
-		}
-
-		return match + csrfInput
-	})
-}
-
-func injectCSRFMeta(html string, token string) string {
-	if token == "" {
-		return html
-	}
-
-	if strings.Contains(html, `name="csrf-token"`) ||
-		strings.Contains(html, `name='csrf-token'`) {
-		return html
-	}
-
-	escapedToken := htmlEscape(token)
-	meta := fmt.Sprintf(
-		`<meta name="csrf-token" content="%s">`,
-		escapedToken,
-	)
-
-	return reHeadTag.ReplaceAllStringFunc(html, func(match string) string {
-		return match + meta
-	})
 }
