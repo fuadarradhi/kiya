@@ -74,6 +74,20 @@ type Builder struct {
 	skipDefaultCondition bool
 }
 
+// resultAffected adalah helper tunggal untuk mengubah (Result, error) dari
+// executor menjadi (rowsAffected, error). Semua operasi tulis publik
+// memakai ini agar konsisten tidak pernah membocorkan tipe Result.
+func resultAffected(res Result, err error) (int64, error) {
+	if err != nil {
+		return 0, err
+	}
+	if res == nil {
+		return 0, nil
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 func (b *Builder) Bind(dest any) *Builder {
 	b.dest = dest
 	return b
@@ -116,7 +130,7 @@ func (b *Builder) Nullable(cols ...string) *Builder {
 	return b
 }
 
-func (b *Builder) Upsert(data any, updateCols ...string) (Result, error) {
+func (b *Builder) Upsert(data any, updateCols ...string) (int64, error) {
 	b.onDuplicateUpdateCols = updateCols
 	return b.Insert(data)
 }
@@ -427,7 +441,7 @@ func (b *Builder) applyDefaultCondition() {
 	}
 }
 
-func (b *Builder) Insert(data ...any) (Result, error) {
+func (b *Builder) Insert(data ...any) (int64, error) {
 	var d any
 	if len(data) > 0 {
 		d = data[0]
@@ -436,7 +450,7 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 	}
 
 	if d == nil {
-		return nil, errors.New("insert data cannot be empty")
+		return 0, errors.New("insert data cannot be empty")
 	}
 
 	var tableName string
@@ -457,7 +471,7 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		case map[string]any:
 			m = t
 		default:
-			return nil, errors.New("unsupported map type")
+			return 0, errors.New("unsupported map type")
 		}
 
 		mapData = make(map[string]any)
@@ -492,17 +506,17 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		var err error
 		tableName, err = getTableNameFromModel(d)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		mapData, err = structToMap(d, selectedCols, b.nullableCols)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 
 		v := reflect.ValueOf(d)
 		if v.Kind() == reflect.Ptr {
 			if v.IsNil() {
-				return nil, errors.New("struct pointer is nil")
+				return 0, errors.New("struct pointer is nil")
 			}
 			v = v.Elem()
 		}
@@ -515,7 +529,7 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 	}
 
 	if len(mapData) == 0 {
-		return nil, errors.New("insert data cannot be empty")
+		return 0, errors.New("insert data cannot be empty")
 	}
 
 	clone := b.clone()
@@ -533,11 +547,11 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 
 	if clone.table == "" {
 		if tableName == "" {
-			return nil, errors.New("table name is required")
+			return 0, errors.New("table name is required")
 		}
 		clone.table = SanitizeIdentifier(tableName)
 		if clone.table == "" {
-			return nil, errors.New("invalid table name inferred from model")
+			return 0, errors.New("invalid table name inferred from model")
 		}
 	}
 
@@ -547,32 +561,35 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		var id int64
 		err := clone.executor.Get(clone.ctx, &id, query, args...)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		assignAutoIncrementID(d, id)
-		return &insertResult{lastInsertId: id, rowsAffected: 1}, nil
+		return 1, nil
 	}
 
 	res, err := clone.executor.Exec(clone.ctx, query, args...)
+	if err != nil {
+		return 0, err
+	}
 
-	if err == nil && res != nil {
+	if res != nil {
 		if id, idErr := res.LastInsertId(); idErr == nil {
 			assignAutoIncrementID(d, id)
 		}
 	}
 
-	return res, err
+	return resultAffected(res, nil)
 }
 
-func (b *Builder) InsertBatch(data []any) (Result, error) {
+func (b *Builder) InsertBatch(data []any) (int64, error) {
 	if len(data) == 0 {
-		return nil, errors.New("insert batch data cannot be empty")
+		return 0, errors.New("insert batch data cannot be empty")
 	}
 
 	first := data[0]
 	tableName, err := getTableNameFromModel(first)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	var selectedCols []string
@@ -586,7 +603,7 @@ func (b *Builder) InsertBatch(data []any) (Result, error) {
 	for _, item := range data {
 		m, err := structToMap(item, selectedCols, b.nullableCols)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		if len(m) > 0 {
 			mapDataList = append(mapDataList, m)
@@ -594,7 +611,7 @@ func (b *Builder) InsertBatch(data []any) (Result, error) {
 	}
 
 	if len(mapDataList) == 0 {
-		return nil, errors.New("insert batch data cannot be empty after processing")
+		return 0, errors.New("insert batch data cannot be empty after processing")
 	}
 
 	var cols []string
@@ -638,15 +655,14 @@ func (b *Builder) InsertBatch(data []any) (Result, error) {
 	}
 
 	query, qArgs := clone.Build()
-	res, err := clone.executor.Exec(clone.ctx, query, qArgs...)
-	return res, err
+	return resultAffected(clone.executor.Exec(clone.ctx, query, qArgs...))
 }
 
-func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
+func (b *Builder) execUpdate(data any, skipWhereCheck bool) (int64, error) {
 	b.applyDefaultCondition()
 
 	if !skipWhereCheck && len(b.wheres) == 0 {
-		return nil, errors.New("update requires where clause (safety check)")
+		return 0, errors.New("update requires where clause (safety check)")
 	}
 
 	var tableName string
@@ -666,7 +682,7 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
 		case map[string]any:
 			m = t
 		default:
-			return nil, errors.New("unsupported map type")
+			return 0, errors.New("unsupported map type")
 		}
 
 		mapData = make(map[string]any)
@@ -700,16 +716,16 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
 		var err error
 		tableName, err = getTableNameFromModel(data)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 		mapData, err = structToMap(data, selectedCols, b.nullableCols)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 	}
 
 	if len(mapData) == 0 {
-		return nil, errors.New("update data cannot be empty")
+		return 0, errors.New("update data cannot be empty")
 	}
 
 	clone := b.clone()
@@ -718,21 +734,19 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (Result, error) {
 
 	if clone.table == "" {
 		if tableName == "" {
-			return nil, errors.New("table name is required")
+			return 0, errors.New("table name is required")
 		}
 		clone.table = SanitizeIdentifier(tableName)
 		if clone.table == "" {
-			return nil, errors.New("invalid table name inferred from model")
+			return 0, errors.New("invalid table name inferred from model")
 		}
 	}
 
 	query, args := clone.Build()
-	res, err := clone.executor.Exec(clone.ctx, query, args...)
-
-	return res, err
+	return resultAffected(clone.executor.Exec(clone.ctx, query, args...))
 }
 
-func (b *Builder) Update(data ...any) (Result, error) {
+func (b *Builder) Update(data ...any) (int64, error) {
 	var d any
 	if len(data) > 0 {
 		d = data[0]
@@ -740,12 +754,12 @@ func (b *Builder) Update(data ...any) (Result, error) {
 		d = b.dest
 	}
 	if d == nil {
-		return nil, errors.New("update data cannot be empty")
+		return 0, errors.New("update data cannot be empty")
 	}
 	return b.execUpdate(d, false)
 }
 
-func (b *Builder) execDelete(model any, skipWhereCheck bool) (Result, error) {
+func (b *Builder) execDelete(model any, skipWhereCheck bool) (int64, error) {
 	b.applyDefaultCondition()
 
 	if b.softDeleteCondition != "" {
@@ -753,7 +767,7 @@ func (b *Builder) execDelete(model any, skipWhereCheck bool) (Result, error) {
 	}
 
 	if !skipWhereCheck && len(b.wheres) == 0 {
-		return nil, errors.New("delete requires where clause (safety check)")
+		return 0, errors.New("delete requires where clause (safety check)")
 	}
 
 	clone := b.clone()
@@ -762,27 +776,26 @@ func (b *Builder) execDelete(model any, skipWhereCheck bool) (Result, error) {
 	if model != nil {
 		tblName, err := getTableNameFromModel(model)
 		if err != nil {
-			return nil, err
+			return 0, err
 		}
 
 		if clone.table == "" {
 			clone.table = SanitizeIdentifier(tblName)
 			if clone.table == "" {
-				return nil, errors.New("invalid table name inferred from model")
+				return 0, errors.New("invalid table name inferred from model")
 			}
 		}
 	}
 
 	if clone.table == "" {
-		return nil, errors.New("table name is required")
+		return 0, errors.New("table name is required")
 	}
 
 	query, args := clone.Build()
-	res, err := clone.executor.Exec(clone.ctx, query, args...)
-	return res, err
+	return resultAffected(clone.executor.Exec(clone.ctx, query, args...))
 }
 
-func (b *Builder) Delete(models ...any) (Result, error) {
+func (b *Builder) Delete(models ...any) (int64, error) {
 	var d any
 	if len(models) > 0 {
 		d = models[0]
@@ -793,9 +806,17 @@ func (b *Builder) Delete(models ...any) (Result, error) {
 	return b.execDelete(d, false)
 }
 
-func (b *Builder) Purge() (Result, error) {
+func (b *Builder) Purge() (int64, error) {
 	b.softDeleteCondition = ""
 	return b.execDelete(nil, false)
+}
+
+// Restore membatalkan soft-delete: set deleted_at = NULL pada baris yang
+// cocok dengan where/PK. softDeleteCondition sengaja dikosongkan supaya
+// baris yang sudah terhapus (deleted_at IS NOT NULL) ikut ter-update.
+func (b *Builder) Restore() (int64, error) {
+	b.softDeleteCondition = ""
+	return b.execUpdate(map[string]any{"deleted_at": nil}, false)
 }
 
 func (b *Builder) Find(dest ...any) (bool, error) {
@@ -1011,11 +1032,10 @@ func (b *Builder) Paginate(dest any, page, perPage int) (*Pagination, error) {
 	return p, nil
 }
 
-func (b *Builder) Exec() (Result, error) {
+func (b *Builder) Exec() (int64, error) {
 	clone := b.clone()
 	query, args := clone.Build()
-	res, err := clone.executor.Exec(clone.ctx, query, args...)
-	return res, err
+	return resultAffected(clone.executor.Exec(clone.ctx, query, args...))
 }
 
 func (b *Builder) Debug() (string, []any) {
@@ -1090,7 +1110,8 @@ func (b *Builder) buildSelect(sql *strings.Builder) {
 		sql.WriteString(" FROM undefined_table ")
 		logger.LogError("[DB] Build select without table name")
 	} else {
-		sql.WriteString(" FROM " + b.table)
+		sql.WriteString(" FROM ")
+		sql.WriteString(b.table)
 	}
 
 	for _, j := range b.joins {
@@ -1100,14 +1121,17 @@ func (b *Builder) buildSelect(sql *strings.Builder) {
 	b.buildWheres(sql)
 
 	if len(b.groupBys) > 0 {
-		sql.WriteString(" GROUP BY " + strings.Join(b.groupBys, ", "))
+		sql.WriteString(" GROUP BY ")
+		sql.WriteString(strings.Join(b.groupBys, ", "))
 	}
 
 	if len(b.havings) > 0 {
 		sql.WriteString(" HAVING ")
 		for i, h := range b.havings {
 			if i > 0 {
-				sql.WriteString(" " + h.boolean + " ")
+				sql.WriteString(" ")
+				sql.WriteString(h.boolean)
+				sql.WriteString(" ")
 			}
 			sql.WriteString(h.expr)
 			b.args = append(b.args, h.args...)
@@ -1115,7 +1139,8 @@ func (b *Builder) buildSelect(sql *strings.Builder) {
 	}
 
 	if len(b.orderBys) > 0 {
-		sql.WriteString(" ORDER BY " + strings.Join(b.orderBys, ", "))
+		sql.WriteString(" ORDER BY ")
+		sql.WriteString(strings.Join(b.orderBys, ", "))
 	}
 
 	if b.limit != nil {
@@ -1272,7 +1297,8 @@ func (b *Builder) buildUpdate(sql *strings.Builder) {
 }
 
 func (b *Builder) buildDelete(sql *strings.Builder) {
-	sql.WriteString("DELETE FROM " + b.table)
+	sql.WriteString("DELETE FROM ")
+	sql.WriteString(b.table)
 	b.buildWheres(sql)
 }
 
@@ -1299,7 +1325,9 @@ func (b *Builder) buildWheres(sql *strings.Builder) {
 				sql.WriteString(" AND (")
 				for i, w := range b.wheres {
 					if i > 0 {
-						sql.WriteString(" " + w.boolean + " ")
+						sql.WriteString(" ")
+						sql.WriteString(w.boolean)
+						sql.WriteString(" ")
 					}
 					sql.WriteString(w.expr)
 					b.args = append(b.args, w.args...)
@@ -1316,7 +1344,9 @@ func (b *Builder) buildWheres(sql *strings.Builder) {
 	} else {
 		for i, w := range b.wheres {
 			if i > 0 {
-				sql.WriteString(" " + w.boolean + " ")
+				sql.WriteString(" ")
+				sql.WriteString(w.boolean)
+				sql.WriteString(" ")
 			}
 			sql.WriteString(w.expr)
 			b.args = append(b.args, w.args...)

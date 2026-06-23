@@ -61,45 +61,56 @@ func (db *DB) Stats() sql.DBStats {
 	return sql.DBStats{}
 }
 
-func (db *DB) Insert(data any) (Result, error) {
+func (db *DB) Insert(data any) (int64, error) {
 	tableName, err := getTableNameFromModel(data)
 	if err != nil {
-		return nil, fmt.Errorf("Insert: %w", err)
+		return 0, fmt.Errorf("Insert: %w", err)
 	}
 	return db.Table(tableName).Insert(data)
 }
 
-func (db *DB) InsertBatch(data []any) (Result, error) {
+func (db *DB) InsertBatch(data []any) (int64, error) {
 	if len(data) == 0 {
-		return nil, errors.New("InsertBatch: data is empty")
+		return 0, errors.New("InsertBatch: data is empty")
 	}
 	tableName, err := getTableNameFromModel(data[0])
 	if err != nil {
-		return nil, fmt.Errorf("InsertBatch: %w", err)
+		return 0, fmt.Errorf("InsertBatch: %w", err)
 	}
 	return db.Table(tableName).InsertBatch(data)
 }
 
-func (db *DB) Update(data any) (Result, error) {
-	return nil, errors.New("Update requires a Where clause. Use db.Where(...).Update() or db.UpdateAll()")
-}
-
-func (db *DB) UpdateAll(data any) (Result, error) {
+// Upsert: INSERT, dan saat bentrok unique/primary key, UPDATE kolom
+// di updateCols. Nama tabel di-infer dari struct (sama seperti Insert),
+// jadi tidak perlu .Table(). ID autoincrement otomatis di-assign balik.
+func (db *DB) Upsert(data any, updateCols ...string) (int64, error) {
 	tableName, err := getTableNameFromModel(data)
 	if err != nil {
-		return nil, fmt.Errorf("UpdateAll: %w", err)
+		return 0, fmt.Errorf("Upsert: %w", err)
+	}
+	return db.Table(tableName).Upsert(data, updateCols...)
+}
+
+func (db *DB) Update(data any) (int64, error) {
+	return 0, errors.New("Update requires a Where clause. Use db.Where(...).Update() or db.UpdateAll()")
+}
+
+func (db *DB) UpdateAll(data any) (int64, error) {
+	tableName, err := getTableNameFromModel(data)
+	if err != nil {
+		return 0, fmt.Errorf("UpdateAll: %w", err)
 	}
 	return db.Table(tableName).execUpdate(data, true)
 }
 
-func (db *DB) Delete(data any) (Result, error) {
-	return nil, errors.New("Delete requires a Where clause. Use db.Where(...).Delete() or db.DeleteAll()")
+func (db *DB) Delete(data any) (int64, error) {
+	return 0, errors.New("Delete requires a Where clause. Use db.Where(...).Delete() or db.DeleteAll()")
 }
 
-func (db *DB) DeleteAll(data any) (Result, error) {
+func (db *DB) DeleteAll(data any) (int64, error) {
 	tableName, err := getTableNameFromModel(data)
 	if err != nil {
-		return nil, fmt.Errorf("DeleteAll: %w", err)
+		return 0, fmt.Errorf("DeleteAll: %w", err)
 	}
 	return db.Table(tableName).execDelete(data, true)
 }

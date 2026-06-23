@@ -172,40 +172,47 @@ func (b *BaseModel) Use(tx Tx) *Builder {
 	return b.newBuilder().Use(tx)
 }
 
-func (b *BaseModel) Insert() (Result, error) {
+func (b *BaseModel) Insert() (int64, error) {
 	return b.newBuilder().Insert()
 }
 
-func (b *BaseModel) Upsert(updateCols ...string) (Result, error) {
+func (b *BaseModel) Upsert(updateCols ...string) (int64, error) {
 	return b.newBuilder().Upsert(b.__self, updateCols...)
 }
 
-func (b *BaseModel) Update() (Result, error) {
+func (b *BaseModel) Update() (int64, error) {
 	return b.builderWithID().Update()
 }
 
-func (b *BaseModel) UpdateAll() (Result, error) {
+func (b *BaseModel) UpdateAll() (int64, error) {
 	return b.newBuilder().UpdateAll(b.__self)
 }
 
-func (b *BaseModel) Delete() (Result, error) {
+func (b *BaseModel) Delete() (int64, error) {
 	return b.builderWithID().Delete()
 }
 
-func (b *BaseModel) DeleteAll() (Result, error) {
+func (b *BaseModel) DeleteAll() (int64, error) {
 	return b.newBuilder().DeleteAll(b.__self)
 }
 
-func (b *BaseModel) Purge() (Result, error) {
+func (b *BaseModel) Purge() (int64, error) {
 	builder := b.builderWithID()
 	builder.ClearSoftDeleteCondition()
 	return builder.Delete()
 }
 
-func (b *BaseModel) PurgeAll() (Result, error) {
+func (b *BaseModel) PurgeAll() (int64, error) {
 	builder := b.newBuilder()
 	builder.ClearSoftDeleteCondition()
 	return builder.DeleteAll(b.__self)
+}
+
+// Restore membatalkan soft-delete pada baris dengan PK saat ini
+// (set deleted_at = NULL). Hanya bermakna untuk model yang punya
+// field DeletedAt.
+func (b *BaseModel) Restore() (int64, error) {
+	return b.builderWithID().Restore()
 }
 
 func (b *BaseModel) Find() (bool, error) {

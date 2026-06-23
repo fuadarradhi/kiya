@@ -75,10 +75,10 @@ func (b *Builder) ClearSoftDeleteCondition() {
 	b.softDeleteCondition = ""
 }
 
-func (b *Builder) UpdateAll(data any) (Result, error) {
+func (b *Builder) UpdateAll(data any) (int64, error) {
 	return b.execUpdate(data, true)
 }
 
-func (b *Builder) DeleteAll(data any) (Result, error) {
+func (b *Builder) DeleteAll(data any) (int64, error) {
 	return b.execDelete(data, true)
 }

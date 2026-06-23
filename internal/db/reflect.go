@@ -269,8 +269,10 @@ func assignAutoIncrementID(model any, id int64) {
 		}
 	}
 
+	// Fallback: field dengan tag db bernama "id" (case-insensitive),
+	// untuk struct yang tidak menandai autoincrement secara eksplisit.
 	for _, f := range info.fields {
-		if f.name == "id" {
+		if strings.EqualFold(f.name, "id") {
 			fieldVal := val.Field(f.idx)
 			if fieldVal.CanSet() {
 				switch fieldVal.Kind() {
