@@ -9,10 +9,8 @@ import (
 	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
-// HandlerFunc defines the handler signature for the router tree.
 type HandlerFunc func(c any) error
 
-// Middleware defines a middleware signature.
 type Middleware func(HandlerFunc) HandlerFunc
 
 type nodeType uint8
@@ -33,26 +31,22 @@ type node struct {
 	handler   HandlerFunc
 }
 
-// Param represents a URL parameter.
 type Param struct {
 	Key   string
 	Value string
 }
 
-// Tree holds the routing trees for different HTTP methods.
 type Tree struct {
 	roots map[string]*node
 	mu    sync.RWMutex
 }
 
-// NewTree creates a new routing tree.
 func NewTree() *Tree {
 	return &Tree{
 		roots: make(map[string]*node),
 	}
 }
 
-// AddRoute registers a new route in the tree.
 func (t *Tree) AddRoute(method, path string, h HandlerFunc) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -96,7 +90,6 @@ func (t *Tree) AddRoute(method, path string, h HandlerFunc) {
 				}
 
 				if isConflict {
-					// FIX 5.7: Do not panic, skip registration instead
 					logger.LogError("ROUTE CONFLICT: Cannot register '%s'. Segment '%s' conflicts with existing '%s'.", fullPath, seg, c.part)
 					return
 				}
@@ -119,7 +112,6 @@ func (t *Tree) AddRoute(method, path string, h HandlerFunc) {
 	}
 }
 
-// FindRoute searches for a route and returns the handler and parameters.
 func (t *Tree) FindRoute(method, path string) (HandlerFunc, []Param) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -183,7 +175,6 @@ func (t *Tree) search(n *node, segments []string, params *[]Param) HandlerFunc {
 	return nil
 }
 
-// AnyMethodExists checks if a path exists for any HTTP method.
 func (t *Tree) AnyMethodExists(path string) bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()

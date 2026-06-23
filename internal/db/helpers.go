@@ -5,14 +5,12 @@ import (
 	"reflect"
 )
 
-// PrimaryKeyInfo holds data about a primary key field in a struct.
 type PrimaryKeyInfo struct {
 	ColumnName string
 	Value      any
 	IsZero     bool
 }
 
-// Pagination holds pagination metadata returned by Paginate().
 type Pagination struct {
 	Total    int64
 	Page     int
@@ -20,12 +18,10 @@ type Pagination struct {
 	LastPage int
 }
 
-// GetTableNameFromModel extracts the table name from a model struct or slice.
 func GetTableNameFromModel(model any) (string, error) {
 	return getTableNameFromModel(model)
 }
 
-// GetPrimaryKeys extracts primary key information from a model struct.
 func GetPrimaryKeys(model any) ([]PrimaryKeyInfo, error) {
 	val := reflect.ValueOf(model)
 	if val.Kind() == reflect.Ptr {
@@ -71,22 +67,18 @@ func GetPrimaryKeys(model any) ([]PrimaryKeyInfo, error) {
 	return pks, nil
 }
 
-// SetSoftDeleteCondition sets the soft delete condition on the builder.
 func (b *Builder) SetSoftDeleteCondition(cond string) {
 	b.softDeleteCondition = cond
 }
 
-// ClearSoftDeleteCondition removes the soft delete condition.
 func (b *Builder) ClearSoftDeleteCondition() {
 	b.softDeleteCondition = ""
 }
 
-// UpdateAll executes an update without requiring a where clause.
 func (b *Builder) UpdateAll(data any) (Result, error) {
 	return b.execUpdate(data, true)
 }
 
-// DeleteAll executes a delete without requiring a where clause.
 func (b *Builder) DeleteAll(data any) (Result, error) {
 	return b.execDelete(data, true)
 }

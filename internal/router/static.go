@@ -12,7 +12,6 @@ import (
 	"strings"
 )
 
-// ServeStatic serves a static file from the provided filesystem.
 func ServeStatic(w http.ResponseWriter, r *http.Request, fsys fs.FS, name string) error {
 	name = path.Clean("/" + name)
 	name = strings.TrimPrefix(name, "/")

@@ -16,7 +16,6 @@ import (
 	"github.com/flosch/pongo2/v6"
 )
 
-// EmbedLoader loads templates from an embedded filesystem.
 type EmbedLoader struct {
 	fs fs.FS
 }
@@ -45,14 +44,12 @@ func (l *EmbedLoader) Get(name string) (io.Reader, error) {
 	return bytes.NewReader(b), nil
 }
 
-// Renderer wraps a pongo2 template set.
 type Renderer struct {
 	set *pongo2.TemplateSet
 }
 
 var registerFiltersOnce sync.Once
 
-// NewRenderer creates a new Renderer from an embedded filesystem.
 func NewRenderer(embedFS fs.FS) *Renderer {
 	if embedFS == nil {
 		return nil
@@ -62,9 +59,6 @@ func NewRenderer(embedFS fs.FS) *Renderer {
 	set := pongo2.NewSet("embed", loader)
 
 	registerFiltersOnce.Do(func() {
-		// FIX 5.3: Remove goroutine ID hack.
-		// Use Global Functions instead of Filters so they can receive context explicitly.
-		// Usage in template: {{ requery("path", Request) }} or {{ encrypt("data", _encKey) }}
 		set.Globals["requery"] = func(args ...*pongo2.Value) (*pongo2.Value, *pongo2.Error) {
 			if len(args) < 2 {
 				return nil, &pongo2.Error{Sender: "func:requery", OrigError: errors.New("requires 2 arguments (url and Request)")}
@@ -135,7 +129,6 @@ func filterJSONEncode(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *po
 	return pongo2.AsValue(string(b)), nil
 }
 
-// Render executes a template and writes to the provided writer.
 func (r *Renderer) Render(w io.Writer, name string, data ...map[string]any) error {
 	if r == nil {
 		return fmt.Errorf("renderer is not initialized")
@@ -154,8 +147,6 @@ func (r *Renderer) Render(w io.Writer, name string, data ...map[string]any) erro
 		ctx = pongo2.Context(data[0])
 	}
 
-	// Clean up internal keys that shouldn't be exposed to template directly
-	// but are needed for global functions.
 	delete(ctx, "_encKey")
 	delete(ctx, "Request")
 
@@ -167,7 +158,6 @@ func (r *Renderer) Render(w io.Writer, name string, data ...map[string]any) erro
 	return tpl.ExecuteWriter(ctx, w)
 }
 
-// Output executes a template and returns the bytes.
 func (r *Renderer) Output(name string, data ...map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
 

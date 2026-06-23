@@ -9,7 +9,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/db"
 )
 
-// BaseModel provides default ORM-like behavior for structs.
 type BaseModel struct {
 	__db            *DB
 	__res           *Resources
@@ -17,7 +16,6 @@ type BaseModel struct {
 	__hasSoftDelete bool
 }
 
-// Init initializes the BaseModel. Called automatically by kiya.Model[T]().
 func (b *BaseModel) Init(database *DB, res *Resources, self any) {
 	b.__db = database
 	b.__res = res
@@ -250,7 +248,6 @@ func (b *BaseModel) Table(name string) *Builder {
 	return b.__db.Table(name).SetResources(b.__res)
 }
 
-// Stats returns database connection pool statistics.
 func (b *BaseModel) Stats() sql.DBStats {
 	if b.__db == nil {
 		return sql.DBStats{}

@@ -14,7 +14,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisStore stores sessions in a Redis backend.
 type RedisStore struct {
 	client       *redis.Client
 	codecs       []securecookie.Codec
@@ -26,7 +25,6 @@ type RedisStore struct {
 	mu           sync.Mutex
 }
 
-// NewRedisStore creates a new RedisStore instance.
 func NewRedisStore(addr, password string, db int, keyPairs []byte, maxAge int, sameSite http.SameSite) (*RedisStore, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     addr,
@@ -56,12 +54,10 @@ func NewRedisStore(addr, password string, db int, keyPairs []byte, maxAge int, s
 	return store, nil
 }
 
-// Get returns a session for the given name after adding it to the registry.
 func (s *RedisStore) Get(r *http.Request, name string) (*sessions.Session, error) {
 	return sessions.GetRegistry(r).Get(s, name)
 }
 
-// New creates a new session for the given name.
 func (s *RedisStore) New(r *http.Request, name string) (*sessions.Session, error) {
 	session := sessions.NewSession(s, name)
 	opts := *s.options
@@ -76,7 +72,6 @@ func (s *RedisStore) New(r *http.Request, name string) (*sessions.Session, error
 	session.ID = c.Value
 	err = s.load(session)
 	if err != nil {
-		// If session doesn't exist in Redis, treat as new
 		session.ID = ""
 		session.IsNew = true
 		return session, nil
@@ -86,7 +81,6 @@ func (s *RedisStore) New(r *http.Request, name string) (*sessions.Session, error
 	return session, nil
 }
 
-// Save adds a single session to the response.
 func (s *RedisStore) Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error {
 	if session.Options.MaxAge <= 0 {
 		if err := s.delete(session); err != nil {
@@ -151,16 +145,13 @@ func (s *RedisStore) delete(session *sessions.Session) error {
 	return s.client.Del(ctx, key).Err()
 }
 
-// SessionSerializer represents a serializer for session data.
 type SessionSerializer interface {
 	Serialize(s *sessions.Session) ([]byte, error)
 	Deserialize(d []byte, s *sessions.Session) error
 }
 
-// JSONSerializer encodes/decodes session data to JSON.
 type JSONSerializer struct{}
 
-// Serialize encodes the session values to JSON.
 func (s JSONSerializer) Serialize(sess *sessions.Session) ([]byte, error) {
 	m := make(map[string]interface{}, len(sess.Values))
 	for k, v := range sess.Values {
@@ -173,7 +164,6 @@ func (s JSONSerializer) Serialize(sess *sessions.Session) ([]byte, error) {
 	return json.Marshal(m)
 }
 
-// Deserialize decodes the JSON data back to session values.
 func (s JSONSerializer) Deserialize(d []byte, sess *sessions.Session) error {
 	m := make(map[string]interface{})
 	err := json.Unmarshal(d, &m)

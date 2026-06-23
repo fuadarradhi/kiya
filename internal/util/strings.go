@@ -5,7 +5,6 @@ import (
 	"unicode"
 )
 
-// HTMLEscape meng-escape karakter HTML khusus (&, <, >, ", ').
 func HTMLEscape(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -28,7 +27,6 @@ func HTMLEscape(s string) string {
 	return b.String()
 }
 
-// ToSnakeCase converts a CamelCase/PascalCase identifier to snake_case.
 func ToSnakeCase(in string) string {
 	runes := []rune(in)
 	length := len(runes)

@@ -12,7 +12,6 @@ var (
 	reValidOrderBy    = regexp.MustCompile(`^[a-zA-Z0-9_\.\s,]+$`)
 )
 
-// SanitizeIdentifier ensures the identifier is safe to be used in SQL.
 func SanitizeIdentifier(ident string) string {
 	if ident == "" {
 		return ""
@@ -24,7 +23,6 @@ func SanitizeIdentifier(ident string) string {
 	return ""
 }
 
-// SanitizeOrderBy ensures the order by expression is safe.
 func SanitizeOrderBy(expr string) string {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
@@ -43,7 +41,6 @@ func SanitizeOrderBy(expr string) string {
 	return ""
 }
 
-// SanitizeOnClause ensures the ON clause is safe from SQL injection.
 func SanitizeOnClause(on string) string {
 	onLower := strings.ToLower(on)
 	if strings.Contains(on, "--") || strings.Contains(on, "/*") {

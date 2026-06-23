@@ -27,7 +27,6 @@ type contextKey string
 
 const RequestIDKey contextKey = "request_id"
 
-// Router is the main HTTP router and framework entrypoint.
 type Router struct {
 	tree         *router.Tree
 	middleware   []Middleware
@@ -72,7 +71,6 @@ type Router struct {
 	healthCheckPath string
 }
 
-// adapterFunc converts a kiya.HandlerFunc to an internal router.HandlerFunc.
 func adapterFunc(h HandlerFunc) router.HandlerFunc {
 	return func(c any) error {
 		if res, ok := c.(*Resources); ok {
@@ -82,7 +80,6 @@ func adapterFunc(h HandlerFunc) router.HandlerFunc {
 	}
 }
 
-// adapterMiddleware converts a kiya.Middleware to an internal router.Middleware.
 func adapterMiddleware(m Middleware) router.Middleware {
 	return func(next router.HandlerFunc) router.HandlerFunc {
 		kiyaNext := func(res *Resources) error {
@@ -164,7 +161,6 @@ func (r *Router) Head(path string, h HandlerFunc, name ...string) {
 func (r *Router) addRoute(method, path string, h HandlerFunc, name ...string) {
 	fullPath := r.prefix + path
 
-	// Pre-compute middleware chain per route registration
 	fullHandler := chain(h, r.middleware...)
 	r.tree.AddRoute(method, fullPath, fullHandler)
 
@@ -173,7 +169,6 @@ func (r *Router) addRoute(method, path string, h HandlerFunc, name ...string) {
 	}
 }
 
-// URL generates a URL for a named route with optional parameters.
 func (r *Router) URL(name string, params ...Map) string {
 	path, ok := r.routeNames[name]
 	if !ok {
@@ -211,7 +206,6 @@ func (r *Router) Redirect(path, target string, code int) {
 	})
 }
 
-// generateRequestID generates a random 16-byte hex string.
 func generateRequestID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
@@ -227,7 +221,6 @@ func (r *Router) createRootHandler() http.Handler {
 		return rootHandler
 	}
 
-	// Wrap with WAF, but allow skipping for certain paths (e.g., large file uploads)
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		for _, p := range r.wafExemptPaths {
 			if strings.HasPrefix(req.URL.Path, p) {
@@ -239,7 +232,6 @@ func (r *Router) createRootHandler() http.Handler {
 	})
 }
 
-// serveInternal is the core HTTP request handler.
 func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	defer func() {
 		if err := recover(); err != nil {
@@ -248,7 +240,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
-	// Request ID
 	reqID := req.Header.Get("X-Request-Id")
 	if reqID == "" {
 		reqID = generateRequestID()
@@ -257,7 +248,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	ctx := context.WithValue(req.Context(), RequestIDKey, reqID)
 	req = req.WithContext(ctx)
 
-	// CORS
 	if r.corsConfig.Enabled {
 		origin := req.Header.Get("Origin")
 		if origin != "" {
@@ -319,7 +309,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 	}
 
-	// CSP Header
 	if r.csp != "" {
 		isExempt := false
 		for _, p := range r.cspExemptPaths {
@@ -361,7 +350,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
-	// FIX 1.1: Use saveErr instead of err
 	defer func() {
 		if res.Session() != nil {
 			if saveErr := res.Session().Save(); saveErr != nil {
@@ -442,7 +430,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		finalHandler = handler
 	}
 
-	// Wrap response writer to record status code
 	var statusRec router.StatusRecorder
 	if _, ok := w.(router.WrittenChecker); !ok {
 		rec := router.NewStatusRecorder(w)
@@ -477,19 +464,15 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// chain links middleware together efficiently (pre-computed).
-// It accepts kiya.HandlerFunc and kiya.Middleware, and returns an internal router.HandlerFunc.
 func chain(h HandlerFunc, m ...Middleware) router.HandlerFunc {
 	if h == nil {
 		return nil
 	}
 
-	// Convert the base kiya handler to internal router handler
 	next := adapterFunc(h)
 
 	for i := len(m) - 1; i >= 0; i-- {
 		mw := m[i]
-		// Pre-compute the wrapped handler using the adapter
 		wrapped := adapterMiddleware(mw)(next)
 
 		next = func(c any) error {
@@ -540,7 +523,6 @@ func (r *Router) defaultErrorHandler(c *Resources, code int, msg string, err err
 		return
 	}
 
-	// FIX 3.7: Prevent info leak in production
 	if r.debug {
 		c.String(code, fmt.Sprintf("%d %s\n\n%s", code, http.StatusText(code), msg))
 	} else {

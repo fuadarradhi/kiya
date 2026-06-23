@@ -19,12 +19,10 @@ import (
 
 const defaultMaxWAFBufferSize int64 = 10 << 20
 
-// StatusRecorder is an interface to get the HTTP status code of a response.
 type StatusRecorder interface {
 	StatusCode() int
 }
 
-// WrittenChecker is an interface to check if the response has been written.
 type WrittenChecker interface {
 	Written() bool
 }
@@ -56,7 +54,6 @@ func (rec *statusRecorder) Flush() {
 	}
 }
 
-// NewStatusRecorder wraps an http.ResponseWriter to record the status code.
 func NewStatusRecorder(w http.ResponseWriter) http.ResponseWriter {
 	return &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 }
@@ -196,7 +193,6 @@ func (w *wafResponseWriter) Flush() {
 	}
 }
 
-// WrapWithWAF wraps an http.Handler with Coraza WAF protection.
 func WrapWithWAF(next http.Handler, waf coraza.WAF, maxBufferSize int64) http.Handler {
 	if waf == nil {
 		return next
@@ -330,7 +326,6 @@ func WrapWithWAF(next http.Handler, waf coraza.WAF, maxBufferSize int64) http.Ha
 	})
 }
 
-// InitWAF initializes the Coraza WAF engine.
 func InitWAF(debug bool) (coraza.WAF, error) {
 	engineMode := "On"
 	if debug {

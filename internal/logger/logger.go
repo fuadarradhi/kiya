@@ -16,7 +16,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/util"
 )
 
-// Config holds settings for the logger.
 type Config struct {
 	Debug   bool
 	Token   string
@@ -89,7 +88,6 @@ func init() {
 	consoleLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 }
 
-// Init initializes the logger.
 func Init(cfg Config) {
 	logStateMu.Lock()
 	defer logStateMu.Unlock()
@@ -386,17 +384,14 @@ func logf(level string, color string, format string, v ...any) {
 	}
 }
 
-// LogInfo logs an INFO message.
 func LogInfo(format string, v ...any) {
 	logf("INFO", colorGreen, format, v...)
 }
 
-// LogWarn logs a WARN message.
 func LogWarn(format string, v ...any) {
 	logf("WARN", colorYellow, format, v...)
 }
 
-// LogError logs an ERROR message and sends a Telegram alert.
 func LogError(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 
@@ -422,7 +417,6 @@ func LogError(format string, v ...any) {
 	}
 }
 
-// LogWAF logs a WAF/ATTACK message and sends a Telegram alert.
 func LogWAF(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 
@@ -453,7 +447,6 @@ func LogWAF(format string, v ...any) {
 	}
 }
 
-// LogTelegram sends a custom error alert to Telegram with request info.
 func LogTelegram(r *http.Request, err any) {
 	logStateMu.RLock()
 	debug := isDebug
@@ -539,7 +532,6 @@ func closeUnsafe() {
 	}
 }
 
-// Close closes all logger resources.
 func Close() {
 	logStateMu.Lock()
 	defer logStateMu.Unlock()

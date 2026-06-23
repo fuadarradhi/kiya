@@ -13,28 +13,14 @@ import (
 	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
-// Result is an alias for db.Result
 type Result = db.Result
-
-// Tx is an alias for db.Tx
 type Tx = db.Tx
-
-// Executor is an alias for db.Executor
 type Executor = db.Executor
-
-// Dialect is an alias for db.Dialect
 type Dialect = db.Dialect
-
-// DB is an alias for db.DB. All fields are unexported.
 type DB = db.DB
-
-// Builder is an alias for db.Builder. All fields are unexported.
 type Builder = db.Builder
-
-// Pagination is an alias for db.Pagination
 type Pagination = db.Pagination
 
-// NewDatabase creates a new database connection based on the provided config.
 func NewDatabase(cfg DatabaseConfig) (*DB, error) {
 	if !cfg.Enabled {
 		logger.LogInfo("[Kiya] Database is disabled via config")

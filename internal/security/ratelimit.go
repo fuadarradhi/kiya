@@ -22,7 +22,6 @@ type rateLimitShard struct {
 	limiters map[string]*rateLimiter
 }
 
-// Store is a sharded rate limiter store.
 type Store struct {
 	shards          [shardCount]*rateLimitShard
 	rate            float64
@@ -33,7 +32,6 @@ type Store struct {
 	cancel          context.CancelFunc
 }
 
-// NewStore creates a new rate limit store.
 func NewStore(rate float64, burst int, ttl time.Duration, cleanupInterval time.Duration) *Store {
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -60,7 +58,6 @@ func NewStore(rate float64, burst int, ttl time.Duration, cleanupInterval time.D
 	return s
 }
 
-// Stop terminates the cleanup goroutine.
 func (s *Store) Stop() {
 	s.cancel()
 }
@@ -71,7 +68,6 @@ func (s *Store) getShard(key string) *rateLimitShard {
 	return s.shards[h.Sum32()%shardCount]
 }
 
-// Allow checks if a request is allowed based on the key.
 func (s *Store) Allow(key string) bool {
 	now := time.Now()
 	shard := s.getShard(key)

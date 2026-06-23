@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/sessions"
 )
 
-// Session manages user session data.
 type Session struct {
 	raw   *sessions.Session
 	req   *http.Request
@@ -20,7 +19,6 @@ type Session struct {
 	mu    sync.RWMutex
 }
 
-// NewSession creates a new Session wrapper.
 func NewSession(raw *sessions.Session, r *http.Request, w http.ResponseWriter) *Session {
 	return &Session{
 		raw:   raw,

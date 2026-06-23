@@ -88,7 +88,6 @@ func doSendTelegram(urlSend string, data *strings.Reader) {
 }
 
 func getHash(s string) string {
-	// Menggunakan crypto/sha1 yang sudah di-import di logger.go
 	h := sha1.New()
 	h.Write([]byte(s))
 	return hex.EncodeToString(h.Sum(nil))[:10]

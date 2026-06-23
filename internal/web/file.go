@@ -10,7 +10,6 @@ import (
 	"strings"
 )
 
-// File retrieves a file header from the request.
 func File(req *http.Request, key string) (*multipart.FileHeader, error) {
 	if req.MultipartForm == nil {
 		if err := req.ParseMultipartForm(MaxMultipartMemory); err != nil {
@@ -24,7 +23,6 @@ func File(req *http.Request, key string) (*multipart.FileHeader, error) {
 	return fh, nil
 }
 
-// SaveFile saves an uploaded file to the specified destination path.
 func SaveFile(req *http.Request, key string, dstPath string) error {
 	cleanPath := filepath.Clean(dstPath)
 
@@ -69,10 +67,6 @@ func SaveFile(req *http.Request, key string, dstPath string) error {
 	return err
 }
 
-// SaveFileStream saves an uploaded file to the specified destination path using streaming.
-// It is highly recommended for large files as it does not load the entire file into memory.
-// Note: Using this function consumes the request body, so it should only be used when
-// no other form fields need to be read from the request afterwards.
 func SaveFileStream(req *http.Request, key string, dstPath string) error {
 	cleanPath := filepath.Clean(dstPath)
 

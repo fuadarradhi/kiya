@@ -6,21 +6,18 @@ import (
 	"time"
 )
 
-// Globals provides a concurrency-safe key-value store for global state.
-type Globals struct {
+type Locals struct {
 	store map[string]any
 	mu    sync.RWMutex
 }
 
-// Set stores a value for the given key.
-func (g *Globals) Set(key string, value any) {
+func (g *Locals) Set(key string, value any) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.store[key] = value
 }
 
-// Get retrieves a value for the given key.
-func (g *Globals) Get(key string) any {
+func (g *Locals) Get(key string) any {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if val, ok := g.store[key]; ok {
@@ -29,30 +26,26 @@ func (g *Globals) Get(key string) any {
 	return nil
 }
 
-// Has checks if a key exists in the store.
-func (g *Globals) Has(key string) bool {
+func (g *Locals) Has(key string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	_, ok := g.store[key]
 	return ok
 }
 
-// Del deletes a key from the store.
-func (g *Globals) Del(key string) {
+func (g *Locals) Del(key string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	delete(g.store, key)
 }
 
-// Clear removes all keys from the store.
-func (g *Globals) Clear() {
+func (g *Locals) Clear() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.store = make(map[string]any)
 }
 
-// GetString retrieves a value as a string.
-func (g *Globals) GetString(key string) string {
+func (g *Locals) GetString(key string) string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if val, ok := g.store[key].(string); ok {
@@ -61,8 +54,7 @@ func (g *Globals) GetString(key string) string {
 	return ""
 }
 
-// GetInt retrieves a value as an int.
-func (g *Globals) GetInt(key string) int {
+func (g *Locals) GetInt(key string) int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	switch v := g.store[key].(type) {
@@ -77,8 +69,7 @@ func (g *Globals) GetInt(key string) int {
 	return 0
 }
 
-// GetInt64 retrieves a value as an int64.
-func (g *Globals) GetInt64(key string) int64 {
+func (g *Locals) GetInt64(key string) int64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	switch v := g.store[key].(type) {
@@ -95,8 +86,7 @@ func (g *Globals) GetInt64(key string) int64 {
 	return 0
 }
 
-// GetFloat64 retrieves a value as a float64.
-func (g *Globals) GetFloat64(key string) float64 {
+func (g *Locals) GetFloat64(key string) float64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	switch v := g.store[key].(type) {
@@ -111,8 +101,7 @@ func (g *Globals) GetFloat64(key string) float64 {
 	return 0
 }
 
-// GetBool retrieves a value as a bool.
-func (g *Globals) GetBool(key string) bool {
+func (g *Locals) GetBool(key string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	switch v := g.store[key].(type) {
@@ -129,8 +118,7 @@ func (g *Globals) GetBool(key string) bool {
 	return false
 }
 
-// GetTime retrieves a value as a time.Time.
-func (g *Globals) GetTime(key string) time.Time {
+func (g *Locals) GetTime(key string) time.Time {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if val, ok := g.store[key].(time.Time); ok {

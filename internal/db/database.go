@@ -10,11 +10,8 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// DefaultConditionFunc defines the function signature for default query conditions.
-// `res` is typically a *kiya.Resources passed as `any` to avoid circular imports.
 type DefaultConditionFunc func(fields []string, res any) map[string]any
 
-// DB represents the main database connection wrapper.
 type DB struct {
 	dialect          Dialect
 	executor         Executor
@@ -24,7 +21,6 @@ type DB struct {
 	defaultCondition DefaultConditionFunc
 }
 
-// NewDatabase creates a new DB instance from sqlx.DB.
 func NewDatabase(sqlxDB *sqlx.DB, dialect Dialect, closeFunc func() error, defaultCondition DefaultConditionFunc) *DB {
 	exec := &sqlxExecutor{db: sqlxDB}
 	return &DB{
@@ -43,7 +39,6 @@ func (db *DB) Close() error {
 	return nil
 }
 
-// Stats returns database connection pool statistics.
 func (db *DB) Stats() sql.DBStats {
 	exec := db.executor
 	if le, ok := exec.(*LoggedExecutor); ok {
@@ -63,7 +58,6 @@ func (db *DB) Insert(data any) (Result, error) {
 	return db.Table(tableName).Insert(data)
 }
 
-// InsertBatch inserts multiple records in a single query.
 func (db *DB) InsertBatch(data []any) (Result, error) {
 	if len(data) == 0 {
 		return nil, errors.New("InsertBatch: data is empty")
@@ -115,7 +109,6 @@ func (db *DB) FindAll(dest any) error {
 	return db.Table(tableName).FindAll(dest)
 }
 
-// Paginate fetches a page of data and returns pagination info.
 func (db *DB) Paginate(dest any, page, perPage int) (*Pagination, error) {
 	tableName, err := getTableNameFromModel(dest)
 	if err != nil {

@@ -16,7 +16,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/util"
 )
 
-// RulesFunc defines the validation function signature.
 type RulesFunc func(val any) error
 
 var (
@@ -26,7 +25,6 @@ var (
 
 var validColumnNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// Validator handles struct validation and error formatting.
 type Validator struct {
 	res            *Resources
 	globalErrors   []error
@@ -55,7 +53,6 @@ func init() {
 	}
 }
 
-// RegisterRules registers a custom validation rule.
 func RegisterRules(name string, fn func(v *Validator, param string) RulesFunc) {
 	validatorMu.Lock()
 	defer validatorMu.Unlock()
@@ -67,14 +64,12 @@ func RegisterRules(name string, fn func(v *Validator, param string) RulesFunc) {
 	validator[name] = fn
 }
 
-// RegisterSimpleRule registers a simple validation rule without parameters.
 func RegisterSimpleRule(name string, fn func(val any) error) {
 	RegisterRules(name, func(v *Validator, param string) RulesFunc {
 		return fn
 	})
 }
 
-// HasRule checks if a validation rule exists.
 func HasRule(name string) bool {
 	validatorMu.RLock()
 	defer validatorMu.RUnlock()

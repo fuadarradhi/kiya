@@ -23,7 +23,6 @@ var (
 	reHeadTag    = regexp.MustCompile(`(?i)<head\b[^>]*>`)
 )
 
-// Encrypt encrypts plaintext using AES-GCM with the provided key.
 func Encrypt(plaintext []byte, encryptKey []byte) (string, error) {
 	if len(encryptKey) == 0 {
 		return "", fmt.Errorf("encryption key not configured")
@@ -48,7 +47,6 @@ func Encrypt(plaintext []byte, encryptKey []byte) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(ciphertext), nil
 }
 
-// Decrypt decrypts an AES-GCM encoded string.
 func Decrypt(encoded string, encryptKey []byte) ([]byte, error) {
 	if len(encryptKey) == 0 {
 		return nil, fmt.Errorf("encryption key not configured")
@@ -85,12 +83,10 @@ func Decrypt(encoded string, encryptKey []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// EncryptString encrypts a string.
 func EncryptString(plaintext string, encryptKey []byte) (string, error) {
 	return Encrypt([]byte(plaintext), encryptKey)
 }
 
-// DecryptString decrypts a string.
 func DecryptString(encoded string, encryptKey []byte) (string, error) {
 	plaintext, err := Decrypt(encoded, encryptKey)
 	if err != nil {
@@ -99,7 +95,6 @@ func DecryptString(encoded string, encryptKey []byte) (string, error) {
 	return string(plaintext), nil
 }
 
-// GenerateCSRFToken creates a new CSRF token bound to the session.
 func GenerateCSRFToken(session *security.Session, encryptKey []byte) (string, error) {
 	if len(encryptKey) == 0 {
 		return "", fmt.Errorf("encryption key not configured")
@@ -118,7 +113,6 @@ func GenerateCSRFToken(session *security.Session, encryptKey []byte) (string, er
 	return EncryptString(plaintext, encryptKey)
 }
 
-// VerifyCSRFToken validates a CSRF token against the current session.
 func VerifyCSRFToken(token string, session *security.Session, encryptKey []byte) bool {
 	if len(encryptKey) == 0 || token == "" {
 		return false
@@ -163,8 +157,6 @@ func VerifyCSRFToken(token string, session *security.Session, encryptKey []byte)
 	return true
 }
 
-// ExtractIP extracts the real client IP, honoring the framework-wide
-// TrustProxyHeaders policy via util.RealIP.
 func ExtractIP(req *http.Request) string {
 	if req == nil {
 		return ""
@@ -172,7 +164,6 @@ func ExtractIP(req *http.Request) string {
 	return util.RealIP(req)
 }
 
-// InjectCSRFIntoForms injects a hidden input into HTML forms.
 func InjectCSRFIntoForms(html string, token string) string {
 	if token == "" {
 		return html
@@ -205,7 +196,6 @@ func InjectCSRFIntoForms(html string, token string) string {
 	})
 }
 
-// InjectCSRFMeta injects a meta tag into the HTML head.
 func InjectCSRFMeta(html string, token string) string {
 	if token == "" {
 		return html

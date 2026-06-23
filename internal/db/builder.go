@@ -31,7 +31,6 @@ type selectClause struct {
 	args []any
 }
 
-// Builder is the opaque struct for building SQL queries.
 type Builder struct {
 	table    string
 	selects  []selectClause
@@ -395,14 +394,14 @@ func (b *Builder) applyDefaultCondition() {
 		return
 	}
 
-	// Wrap existing wheres in parentheses to ensure correct SQL precedence
-	// e.g., WHERE (custom_where) AND (default_condition)
 	if len(b.wheres) > 0 {
 		var existingExpr strings.Builder
 		var existingArgs []any
 		for i, w := range b.wheres {
 			if i > 0 {
-				existingExpr.WriteString(" " + w.boolean + " ")
+				existingExpr.WriteString(" ")
+				existingExpr.WriteString(w.boolean)
+				existingExpr.WriteString(" ")
 			}
 			existingExpr.WriteString(w.expr)
 			existingArgs = append(existingArgs, w.args...)
@@ -565,7 +564,6 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 	return res, err
 }
 
-// InsertBatch inserts multiple records in a single SQL query.
 func (b *Builder) InsertBatch(data []any) (Result, error) {
 	if len(data) == 0 {
 		return nil, errors.New("insert batch data cannot be empty")
@@ -599,7 +597,6 @@ func (b *Builder) InsertBatch(data []any) (Result, error) {
 		return nil, errors.New("insert batch data cannot be empty after processing")
 	}
 
-	// Determine columns from the first map
 	var cols []string
 	for k := range mapDataList[0] {
 		if SanitizeIdentifier(k) != "" {
@@ -627,7 +624,6 @@ func (b *Builder) InsertBatch(data []any) (Result, error) {
 	clone.insertBatchPlaceholders = placeholders
 	clone.insertBatchArgs = args
 
-	// Get primary keys for upsert support
 	v := reflect.ValueOf(first)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -975,7 +971,6 @@ func (b *Builder) Exist() (bool, error) {
 	return true, nil
 }
 
-// Paginate executes a paginated query and returns pagination metadata.
 func (b *Builder) Paginate(dest any, page, perPage int) (*Pagination, error) {
 	if page < 1 {
 		page = 1

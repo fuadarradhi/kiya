@@ -7,12 +7,8 @@ import (
 	"sync/atomic"
 )
 
-// TrustProxyHeaders dikonfigurasi dari Router.New() untuk menentukan
-// apakah header X-Forwarded-For / X-Real-IP dipercaya.
 var TrustProxyHeaders atomic.Bool
 
-// RealIP mengekstrak IP address asli client dari *http.Request,
-// mempertimbangkan reverse proxy headers jika TrustProxyHeaders aktif.
 func RealIP(r *http.Request) string {
 	remoteIP, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -38,7 +34,6 @@ func RealIP(r *http.Request) string {
 	return remoteIP
 }
 
-// IsPrivateIP memeriksa apakah IP adalah loopback atau private range.
 func IsPrivateIP(ip string) bool {
 	ipAddr := net.ParseIP(ip)
 	if ipAddr == nil {

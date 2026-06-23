@@ -9,7 +9,6 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// Result interface for SQL execution results.
 type Result interface {
 	LastInsertId() (int64, error)
 	RowsAffected() (int64, error)
@@ -23,14 +22,12 @@ type insertResult struct {
 func (r *insertResult) LastInsertId() (int64, error) { return r.lastInsertId, nil }
 func (r *insertResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }
 
-// Tx interface for database transactions.
 type Tx interface {
 	Executor
 	Commit() error
 	Rollback() error
 }
 
-// Executor interface for database operations.
 type Executor interface {
 	Select(ctx context.Context, dest any, query string, args ...any) error
 	Get(ctx context.Context, dest any, query string, args ...any) error
