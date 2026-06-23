@@ -978,6 +978,9 @@ func (b *Builder) Paginate(dest any, page, perPage int) (*Pagination, error) {
 	if perPage < 1 {
 		perPage = 10
 	}
+	if perPage > 100 {
+		perPage = 100
+	}
 
 	total, err := b.Count()
 	if err != nil {

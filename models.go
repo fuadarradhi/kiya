@@ -55,7 +55,7 @@ func (b *BaseModel) TableName() string {
 
 func (b *BaseModel) newBuilder() *Builder {
 	if b.__db == nil || b.__self == nil {
-		return nil
+		panic("kiya: model is not initialized properly")
 	}
 	builder := b.__db.Table(b.TableName()).Bind(b.__self).SetResources(b.__res)
 
@@ -236,14 +236,14 @@ func (b *BaseModel) WithDeleted() *Builder {
 
 func (b *BaseModel) Raw(query string, args ...any) *Builder {
 	if b.__db == nil {
-		return nil
+		panic("kiya: model is not initialized, database is nil")
 	}
 	return b.__db.Raw(query, args...).SetResources(b.__res)
 }
 
 func (b *BaseModel) Table(name string) *Builder {
 	if b.__db == nil {
-		return nil
+		panic("kiya: model is not initialized, database is nil")
 	}
 	return b.__db.Table(name).SetResources(b.__res)
 }

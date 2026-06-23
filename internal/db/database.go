@@ -39,6 +39,17 @@ func (db *DB) Close() error {
 	return nil
 }
 
+func (db *DB) Ping() error {
+	exec := db.executor
+	if le, ok := exec.(*LoggedExecutor); ok {
+		exec = le.inner
+	}
+	if sxe, ok := exec.(*sqlxExecutor); ok {
+		return sxe.db.Ping()
+	}
+	return errors.New("ping not supported on this executor type")
+}
+
 func (db *DB) Stats() sql.DBStats {
 	exec := db.executor
 	if le, ok := exec.(*LoggedExecutor); ok {

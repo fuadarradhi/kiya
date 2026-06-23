@@ -10,8 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
-	"strings"
-	"time"
+	"sync"
 
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/web"
@@ -60,9 +59,7 @@ func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *we
 	r.csrfEnabled = false
 
 	if r.locals == nil {
-		r.locals = &Locals{
-			store: make(map[string]any),
-		}
+		r.locals = NewLocals()
 	} else {
 		r.locals.Clear()
 	}
@@ -70,22 +67,44 @@ func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *we
 	r.written = false
 }
 
+var modelCache sync.Map
+
+type modelMetaData struct {
+	bmFieldIdx int
+	hasInit    bool
+}
+
 func Model[T any](res *Resources) *T {
 	instance := new(T)
+	var metaData *modelMetaData
 
-	val := reflect.ValueOf(instance).Elem()
-	bmField := val.FieldByName("BaseModel")
+	typ := reflect.TypeOf(instance).Elem()
 
-	if bmField.IsValid() && bmField.CanAddr() {
-		initMethod := bmField.Addr().MethodByName("Init")
-		if initMethod.IsValid() {
-			args := []reflect.Value{
-				reflect.ValueOf(res.Database()),
-				reflect.ValueOf(res),
-				reflect.ValueOf(instance),
+	if cached, ok := modelCache.Load(typ); ok {
+		metaData = cached.(*modelMetaData)
+	} else {
+		bmField, found := typ.FieldByName("BaseModel")
+		if found {
+			ptrType := reflect.PointerTo(typ)
+			_, exists := ptrType.MethodByName("Init")
+			metaData = &modelMetaData{
+				bmFieldIdx: bmField.Index[0],
+				hasInit:    exists,
 			}
-			initMethod.Call(args)
+		} else {
+			metaData = &modelMetaData{bmFieldIdx: -1}
 		}
+		modelCache.Store(typ, metaData)
+	}
+
+	if metaData.bmFieldIdx != -1 && metaData.hasInit {
+		bmField := reflect.ValueOf(instance).Elem().Field(metaData.bmFieldIdx)
+		args := []reflect.Value{
+			reflect.ValueOf(res.Database()),
+			reflect.ValueOf(res),
+			reflect.ValueOf(instance),
+		}
+		bmField.Addr().MethodByName("Init").Call(args)
 	}
 
 	return instance
@@ -106,11 +125,6 @@ func (r *Resources) AbortWithStatus(code int) {
 
 func (r *Resources) Status(code int) *Resources {
 	if !r.written {
-		if r.session != nil {
-			if err := r.session.Save(); err != nil {
-				LogError("Session Save Error before WriteHeader: %v", err)
-			}
-		}
 		r.response.WriteHeader(code)
 		r.written = true
 	}
@@ -175,7 +189,7 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 
 		var jsonData any
 		if len(data) > 0 && data[0] != nil {
-			jsonData = sanitizeForJSON(data[0])
+			jsonData = web.SanitizeForJSON(data[0])
 		} else {
 			jsonData = []string{}
 		}
@@ -228,12 +242,6 @@ func (r *Resources) Redirect(code int, redirectURL string) error {
 		return errors.New("redirect status code must be 3xx (300-399)")
 	}
 
-	if r.session != nil {
-		if err := r.session.Save(); err != nil {
-			return err
-		}
-	}
-
 	http.Redirect(r.response, r.request, redirectURL, code)
 	r.written = true
 	return nil
@@ -242,12 +250,6 @@ func (r *Resources) Redirect(code int, redirectURL string) error {
 func (r *Resources) RedirectWithQuery(code int, to string, queryParams Map) error {
 	if !isValidRedirectCode(code) {
 		return errors.New("redirect status code must be 3xx (300-399)")
-	}
-
-	if r.session != nil {
-		if err := r.session.Save(); err != nil {
-			return err
-		}
 	}
 
 	parsedURL, err := url.Parse(to)
@@ -269,12 +271,6 @@ func (r *Resources) RedirectWithQuery(code int, to string, queryParams Map) erro
 func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map) error {
 	if !isValidRedirectCode(code) {
 		return errors.New("redirect status code must be 3xx (300-399)")
-	}
-
-	if r.session != nil {
-		if err := r.session.Save(); err != nil {
-			return err
-		}
 	}
 
 	parsedURL, err := url.Parse(to)
@@ -396,81 +392,10 @@ func (r *Resources) ExtractIP() string {
 	return web.ExtractIP(r.request)
 }
 
-func isValidRedirectCode(code int) bool {
-	return code >= 300 && code <= 399
+func (r *Resources) NewWebSocket() (*web.WebSocketConn, error) {
+	return web.NewWebSocket(r.response, r.request)
 }
 
-func sanitizeForJSON(v any) any {
-	if v == nil {
-		return nil
-	}
-
-	rv := reflect.ValueOf(v)
-	for (rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface) && !rv.IsNil() {
-		rv = rv.Elem()
-	}
-
-	switch rv.Kind() {
-	case reflect.Invalid:
-		return nil
-	case reflect.Bool, reflect.String,
-		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64:
-		return rv.Interface()
-	case reflect.Map:
-		if rv.IsNil() {
-			return nil
-		}
-		result := make(map[string]any)
-		iter := rv.MapRange()
-		for iter.Next() {
-			key := fmt.Sprintf("%v", iter.Key().Interface())
-			result[key] = sanitizeForJSON(iter.Value().Interface())
-		}
-		return result
-	case reflect.Slice, reflect.Array:
-		if rv.Kind() == reflect.Slice && rv.IsNil() {
-			return nil
-		}
-		result := make([]any, rv.Len())
-		for i := 0; i < rv.Len(); i++ {
-			result[i] = sanitizeForJSON(rv.Index(i).Interface())
-		}
-		return result
-	case reflect.Struct:
-		if t, ok := rv.Interface().(time.Time); ok {
-			if t.IsZero() {
-				return nil
-			}
-			return t.Format(time.RFC3339)
-		}
-		result := make(map[string]any)
-		rt := rv.Type()
-		for i := 0; i < rv.NumField(); i++ {
-			field := rt.Field(i)
-			if !field.IsExported() {
-				continue
-			}
-			jsonTag := field.Tag.Get("json")
-			if jsonTag == "-" {
-				continue
-			}
-			fieldName := field.Name
-			if jsonTag != "" {
-				parts := strings.Split(jsonTag, ",")
-				if len(parts) > 0 && parts[0] != "" && parts[0] != "-" {
-					fieldName = parts[0]
-				}
-			}
-			if rv.Field(i).CanInterface() {
-				result[fieldName] = sanitizeForJSON(rv.Field(i).Interface())
-			}
-		}
-		return result
-	case reflect.Func, reflect.Chan, reflect.UnsafePointer:
-		return nil
-	default:
-		return nil
-	}
+func isValidRedirectCode(code int) bool {
+	return code >= 300 && code <= 399
 }

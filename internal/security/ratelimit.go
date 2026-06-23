@@ -78,19 +78,7 @@ func (s *Store) Allow(key string) bool {
 	lim, ok := shard.limiters[key]
 	if !ok {
 		if len(shard.limiters) >= maxEntriesPerShard {
-			deleteCount := maxEntriesPerShard / 10
-			if deleteCount < 1 {
-				deleteCount = 1
-			}
-
-			i := 0
-			for k := range shard.limiters {
-				delete(shard.limiters, k)
-				i++
-				if i >= deleteCount {
-					break
-				}
-			}
+			s.evictOldest(shard)
 		}
 
 		shard.limiters[key] = &rateLimiter{
@@ -118,6 +106,35 @@ func (s *Store) Allow(key string) bool {
 
 	lim.tokens--
 	return true
+}
+
+func (s *Store) evictOldest(shard *rateLimitShard) {
+	deleteCount := maxEntriesPerShard / 10
+	if deleteCount < 1 {
+		deleteCount = 1
+	}
+
+	type kv struct {
+		key  string
+		last time.Time
+	}
+
+	entries := make([]kv, 0, len(shard.limiters))
+	for k, lim := range shard.limiters {
+		entries = append(entries, kv{key: k, last: lim.last})
+	}
+
+	for i := 0; i < len(entries); i++ {
+		for j := i + 1; j < len(entries); j++ {
+			if entries[j].last.Before(entries[i].last) {
+				entries[i], entries[j] = entries[j], entries[i]
+			}
+		}
+	}
+
+	for i := 0; i < deleteCount && i < len(entries); i++ {
+		delete(shard.limiters, entries[i].key)
+	}
 }
 
 func (s *Store) cleanup() {

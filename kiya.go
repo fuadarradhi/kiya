@@ -2,7 +2,6 @@ package kiya
 
 import (
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -19,6 +18,10 @@ import (
 )
 
 func New(cfg Config) (*Router, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation: %w", err)
+	}
+
 	host := cfg.Server.Host
 	if host == "" {
 		host = "0.0.0.0"
@@ -36,12 +39,13 @@ func New(cfg Config) (*Router, error) {
 		wafLogPath = "./temp/waf"
 	}
 	logger.Init(logger.Config{
-		Debug:   cfg.Debug,
-		Token:   cfg.Telegram.Token,
-		Group:   cfg.Telegram.Group,
-		LogPath: logPath,
-		WAFPath: wafLogPath,
-		JSON:    cfg.Log.JSON,
+		Debug:           cfg.Debug,
+		Token:           cfg.Telegram.Token,
+		Group:           cfg.Telegram.Group,
+		LogPath:         logPath,
+		WAFPath:         wafLogPath,
+		JSON:            cfg.Log.JSON,
+		TelegramEnabled: cfg.Telegram.Enabled,
 	})
 
 	database, err := NewDatabase(cfg.Database)
@@ -95,18 +99,16 @@ func New(cfg Config) (*Router, error) {
 	}
 
 	if cfg.Server.SessionEnabled {
-		if cfg.Server.SessionSecret == "" {
-			return nil, errors.New("session secret cannot be empty when sessions are enabled")
-		}
-
 		sessionMaxAge := cfg.Server.SessionMaxAge
 		if sessionMaxAge <= 0 {
 			sessionMaxAge = 86400 * 7
 		}
 		r.sessionMaxAge = sessionMaxAge
 
+		secureCookie := cfg.Server.ForceHTTPS || cfg.Server.SecureCookie
+
 		switch cfg.Server.SessionStore.Type {
-		case "redis":
+		case SessionStoreRedis:
 			store, err := security.NewRedisStore(
 				cfg.Server.SessionStore.Redis.Addr,
 				cfg.Server.SessionStore.Redis.Password,
@@ -114,6 +116,7 @@ func New(cfg Config) (*Router, error) {
 				[]byte(cfg.Server.SessionSecret),
 				sessionMaxAge,
 				sameSite,
+				secureCookie,
 			)
 			if err != nil {
 				return nil, fmt.Errorf("create redis session store: %w", err)
@@ -128,7 +131,7 @@ func New(cfg Config) (*Router, error) {
 				Path:     "/",
 				MaxAge:   sessionMaxAge,
 				HttpOnly: true,
-				Secure:   true,
+				Secure:   secureCookie,
 				SameSite: sameSite,
 			}
 			r.sessionStore = store
@@ -246,8 +249,27 @@ func New(cfg Config) (*Router, error) {
 		}
 		r.healthCheckPath = hcPath
 		r.Get(hcPath, func(c *Resources) error {
-			return c.JSON(http.StatusOK, map[string]any{
-				"status": "ok",
+			status := "ok"
+			checks := make(map[string]any)
+
+			if r.database != nil {
+				if err := r.database.Ping(); err != nil {
+					status = "error"
+					checks["database"] = err.Error()
+				} else {
+					checks["database"] = "ok"
+				}
+			}
+
+			code := http.StatusOK
+			if status != "ok" {
+				code = http.StatusServiceUnavailable
+			}
+
+			return c.JSON(code, map[string]any{
+				"status":    status,
+				"checks":    checks,
+				"timestamp": time.Now().Format(time.RFC3339),
 			})
 		})
 		logger.LogInfo("Health check endpoint registered at %s", hcPath)

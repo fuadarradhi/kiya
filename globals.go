@@ -11,15 +11,27 @@ type Locals struct {
 	mu    sync.RWMutex
 }
 
+func NewLocals() *Locals {
+	return &Locals{
+		store: make(map[string]any),
+	}
+}
+
 func (g *Locals) Set(key string, value any) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if g.store == nil {
+		g.store = make(map[string]any)
+	}
 	g.store[key] = value
 }
 
 func (g *Locals) Get(key string) any {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return nil
+	}
 	if val, ok := g.store[key]; ok {
 		return val
 	}
@@ -29,6 +41,9 @@ func (g *Locals) Get(key string) any {
 func (g *Locals) Has(key string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return false
+	}
 	_, ok := g.store[key]
 	return ok
 }
@@ -36,18 +51,25 @@ func (g *Locals) Has(key string) bool {
 func (g *Locals) Del(key string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	delete(g.store, key)
+	if g.store != nil {
+		delete(g.store, key)
+	}
 }
 
 func (g *Locals) Clear() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.store = make(map[string]any)
+	if g.store != nil {
+		g.store = make(map[string]any)
+	}
 }
 
 func (g *Locals) GetString(key string) string {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return ""
+	}
 	if val, ok := g.store[key].(string); ok {
 		return val
 	}
@@ -57,6 +79,9 @@ func (g *Locals) GetString(key string) string {
 func (g *Locals) GetInt(key string) int {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return 0
+	}
 	switch v := g.store[key].(type) {
 	case int:
 		return v
@@ -72,6 +97,9 @@ func (g *Locals) GetInt(key string) int {
 func (g *Locals) GetInt64(key string) int64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return 0
+	}
 	switch v := g.store[key].(type) {
 	case int:
 		return int64(v)
@@ -89,6 +117,9 @@ func (g *Locals) GetInt64(key string) int64 {
 func (g *Locals) GetFloat64(key string) float64 {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return 0
+	}
 	switch v := g.store[key].(type) {
 	case float64:
 		return v
@@ -104,6 +135,9 @@ func (g *Locals) GetFloat64(key string) float64 {
 func (g *Locals) GetBool(key string) bool {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return false
+	}
 	switch v := g.store[key].(type) {
 	case bool:
 		return v
@@ -121,6 +155,9 @@ func (g *Locals) GetBool(key string) bool {
 func (g *Locals) GetTime(key string) time.Time {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	if g.store == nil {
+		return time.Time{}
+	}
 	if val, ok := g.store[key].(time.Time); ok {
 		return val
 	}

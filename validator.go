@@ -16,6 +16,8 @@ import (
 	"github.com/fuadarradhi/kiya/internal/util"
 )
 
+var ErrValidationFailed = errors.New("validation failed")
+
 type RulesFunc func(val any) error
 
 var (
@@ -358,7 +360,7 @@ func (v *Validator) Validate() error {
 
 	if len(v.validateErrors) > 0 {
 		v.Errors()
-		return errors.New("validation failed")
+		return ErrValidationFailed
 	}
 
 	return nil
@@ -377,10 +379,14 @@ func (v *Validator) Error(field string, err string) *Validator {
 }
 
 func (v *Validator) Errors() error {
-	return v.res.APIResponse(http.StatusUnprocessableEntity,
+	v.res.APIResponse(http.StatusUnprocessableEntity,
 		"there are errors in your input, please check and try again",
 		v.validateErrors, []string{},
 	)
+	if len(v.validateErrors) > 0 {
+		return ErrValidationFailed
+	}
+	return nil
 }
 
 func valRequired(v *Validator, param string) RulesFunc {

@@ -26,6 +26,17 @@ type HTTPError struct {
 	Err     error
 }
 
+func NewHTTPError(code int, msg string, err ...error) *HTTPError {
+	e := &HTTPError{
+		Code:    code,
+		Message: msg,
+	}
+	if len(err) > 0 {
+		e.Err = err[0]
+	}
+	return e
+}
+
 func (e *HTTPError) Error() string {
 	if e.Message != "" {
 		return e.Message

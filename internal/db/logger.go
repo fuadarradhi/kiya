@@ -144,8 +144,14 @@ func interpolateQuery(query string, args []any) string {
 func formatArg(arg any) string {
 	switch v := arg.(type) {
 	case string:
+		if len(v) > 100 {
+			return fmt.Sprintf("'%s...(masked)'", v[:20])
+		}
 		return fmt.Sprintf("'%s'", strings.ReplaceAll(v, "'", "''"))
 	case []byte:
+		if len(v) > 100 {
+			return fmt.Sprintf("'%x...(masked)'", v[:20])
+		}
 		return fmt.Sprintf("'%x'", v)
 	case time.Time:
 		return fmt.Sprintf("'%s'", v.Format("2006-01-02 15:04:05"))

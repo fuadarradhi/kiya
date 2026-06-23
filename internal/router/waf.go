@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/types"
@@ -59,6 +60,7 @@ func NewStatusRecorder(w http.ResponseWriter) http.ResponseWriter {
 }
 
 type wafResponseWriter struct {
+	mu sync.Mutex
 	http.ResponseWriter
 	status              int
 	body                bytes.Buffer
@@ -70,10 +72,22 @@ type wafResponseWriter struct {
 	blocked             bool
 }
 
-func (w *wafResponseWriter) StatusCode() int { return w.status }
-func (w *wafResponseWriter) Written() bool   { return w.wrote }
+func (w *wafResponseWriter) StatusCode() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.status
+}
+
+func (w *wafResponseWriter) Written() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.wrote
+}
 
 func (w *wafResponseWriter) WriteHeader(code int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.wrote {
 		return
 	}
@@ -123,6 +137,9 @@ func (w *wafResponseWriter) WriteHeader(code int) {
 }
 
 func (w *wafResponseWriter) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if !w.wrote {
 		w.WriteHeader(http.StatusOK)
 	}
@@ -162,6 +179,9 @@ func (w *wafResponseWriter) FlushToClient() error {
 }
 
 func (w *wafResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if w.streaming || w.wrote {
 		return nil, nil, fmt.Errorf("cannot hijack after response has been written")
 	}
@@ -175,6 +195,9 @@ func (w *wafResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (w *wafResponseWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	if fl, ok := w.ResponseWriter.(http.Flusher); ok {
 		if !w.wrote {
 			w.WriteHeader(w.status)
@@ -214,11 +237,14 @@ func WrapWithWAF(next http.Handler, waf coraza.WAF, maxBufferSize int64) http.Ha
 				if err := recover(); err != nil {
 					logger.LogError("PANIC recovered (Inside Request Context): %v", err)
 
+					wafWriter.mu.Lock()
 					wafWriter.wrote = true
 					wafWriter.status = http.StatusInternalServerError
 					wafWriter.body.Reset()
 					wafWriter.body.WriteString("Internal Server Error")
 					wafWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+					wafWriter.mu.Unlock()
+
 					wafWriter.FlushToClient()
 				}
 			}()
@@ -226,7 +252,9 @@ func WrapWithWAF(next http.Handler, waf coraza.WAF, maxBufferSize int64) http.Ha
 			tx := waf.NewTransaction()
 			defer tx.Close()
 
+			wafWriter.mu.Lock()
 			wafWriter.tx = tx
+			wafWriter.mu.Unlock()
 
 			serverAddr := ""
 			if addr := req.Context().Value(http.LocalAddrContextKey); addr != nil {

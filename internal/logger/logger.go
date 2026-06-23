@@ -17,12 +17,13 @@ import (
 )
 
 type Config struct {
-	Debug   bool
-	Token   string
-	Group   string
-	LogPath string
-	WAFPath string
-	JSON    bool
+	Debug           bool
+	Token           string
+	Group           string
+	LogPath         string
+	WAFPath         string
+	JSON            bool
+	TelegramEnabled bool
 }
 
 var (
@@ -98,8 +99,13 @@ func Init(cfg Config) {
 
 	isDebug = cfg.Debug
 	isJSON = cfg.JSON
-	telegramToken = cfg.Token
-	telegramGroup = cfg.Group
+	telegramToken = ""
+	telegramGroup = ""
+
+	if cfg.TelegramEnabled {
+		telegramToken = cfg.Token
+		telegramGroup = cfg.Group
+	}
 
 	consoleLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 

@@ -1,9 +1,15 @@
 package kiya
 
 import (
+	"errors"
 	"io/fs"
 	"net/http"
 	"time"
+)
+
+const (
+	SessionStoreCookie = "cookie"
+	SessionStoreRedis  = "redis"
 )
 
 type DefaultConditionFunc func(fields []string, res *Resources) map[string]any
@@ -25,9 +31,32 @@ type Config struct {
 	HealthCheck       HealthCheckConfig
 }
 
+func (c Config) Validate() error {
+	if c.Server.SessionEnabled {
+		if c.Server.SessionSecret == "" {
+			return errors.New("session secret cannot be empty when sessions are enabled")
+		}
+		if c.Server.SessionStore.Type == SessionStoreRedis {
+			if c.Server.SessionStore.Redis.Addr == "" {
+				return errors.New("redis address cannot be empty when using redis session store")
+			}
+		}
+	}
+	if c.Database.Enabled {
+		if c.Database.Driver != "mysql" && c.Database.Driver != "postgres" {
+			return errors.New("unsupported database driver, only 'mysql' or 'postgres' are available")
+		}
+		if c.Database.Host == "" || c.Database.Port == "" || c.Database.Name == "" || c.Database.User == "" {
+			return errors.New("database host, port, name, and user are required when database is enabled")
+		}
+	}
+	return nil
+}
+
 type TelegramConfig struct {
-	Token string
-	Group string
+	Enabled bool
+	Token   string
+	Group   string
 }
 
 type ServerConfig struct {
@@ -43,6 +72,7 @@ type ServerConfig struct {
 	SessionStore      SessionStoreConfig
 	MaxWAFBufferSize  int64
 	ForceHTTPS        bool
+	SecureCookie      bool
 	TrustProxyHeaders bool
 	CSRFEnabled       bool
 	CSRFExemptPaths   []string

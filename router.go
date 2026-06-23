@@ -3,6 +3,7 @@ package kiya
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -304,6 +305,9 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 	h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+	h.Set("Cross-Origin-Opener-Policy", "same-origin")
+	h.Set("Cross-Origin-Resource-Policy", "same-origin")
+	h.Set("X-DNS-Prefetch-Control", "off")
 
 	if r.forceHTTPS {
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -336,7 +340,7 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		r.resPool.Put(res)
 	}()
 
-	reqCtx, cancel := context.WithCancel(req.Context())
+	reqCtx, cancel := context.WithTimeout(req.Context(), 15*time.Second)
 	defer cancel()
 	req = req.WithContext(reqCtx)
 
@@ -370,7 +374,9 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		res.session = NewSession(rawSess, req, w)
 
 		if res.Session().Get("_t") == nil {
-			res.Session().Set("_t", time.Now().UnixNano())
+			b := make([]byte, 16)
+			rand.Read(b)
+			res.Session().Set("_t", hex.EncodeToString(b))
 		}
 	}
 
@@ -473,7 +479,8 @@ func chain(h HandlerFunc, m ...Middleware) router.HandlerFunc {
 
 	for i := len(m) - 1; i >= 0; i-- {
 		mw := m[i]
-		wrapped := adapterMiddleware(mw)(next)
+		currentNext := next
+		wrapped := adapterMiddleware(mw)(currentNext)
 
 		next = func(c any) error {
 			if ctx, ok := c.(interface{ IsAborted() bool }); ok && ctx.IsAborted() {

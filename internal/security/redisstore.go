@@ -25,7 +25,7 @@ type RedisStore struct {
 	mu           sync.Mutex
 }
 
-func NewRedisStore(addr, password string, db int, keyPairs []byte, maxAge int, sameSite http.SameSite) (*RedisStore, error) {
+func NewRedisStore(addr, password string, db int, keyPairs []byte, maxAge int, sameSite http.SameSite, secureCookie bool) (*RedisStore, error) {
 	client := redis.NewClient(&redis.Options{
 		Addr:     addr,
 		Password: password,
@@ -43,7 +43,7 @@ func NewRedisStore(addr, password string, db int, keyPairs []byte, maxAge int, s
 			Path:     "/",
 			MaxAge:   maxAge,
 			HttpOnly: true,
-			Secure:   true,
+			Secure:   secureCookie,
 			SameSite: sameSite,
 		},
 		maxAge:     maxAge,
@@ -70,7 +70,7 @@ func (s *RedisStore) New(r *http.Request, name string) (*sessions.Session, error
 	}
 
 	session.ID = c.Value
-	err = s.load(session)
+	err = s.load(r.Context(), session)
 	if err != nil {
 		session.ID = ""
 		session.IsNew = true
@@ -83,7 +83,7 @@ func (s *RedisStore) New(r *http.Request, name string) (*sessions.Session, error
 
 func (s *RedisStore) Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error {
 	if session.Options.MaxAge <= 0 {
-		if err := s.delete(session); err != nil {
+		if err := s.delete(r.Context(), session); err != nil {
 			return err
 		}
 		http.SetCookie(w, sessions.NewCookie(session.Name(), "", session.Options))
@@ -95,7 +95,7 @@ func (s *RedisStore) Save(r *http.Request, w http.ResponseWriter, session *sessi
 		session.ID = base64.URLEncoding.EncodeToString(id)
 	}
 
-	if err := s.save(session); err != nil {
+	if err := s.save(r.Context(), session); err != nil {
 		return err
 	}
 
@@ -103,7 +103,7 @@ func (s *RedisStore) Save(r *http.Request, w http.ResponseWriter, session *sessi
 	return nil
 }
 
-func (s *RedisStore) save(session *sessions.Session) error {
+func (s *RedisStore) save(ctx context.Context, session *sessions.Session) error {
 	b, err := s.serializer.Serialize(session)
 	if err != nil {
 		return err
@@ -112,7 +112,6 @@ func (s *RedisStore) save(session *sessions.Session) error {
 	expiration := time.Duration(s.options.MaxAge) * time.Second
 	key := s.prefix + session.ID
 
-	ctx := context.Background()
 	err = s.client.Set(ctx, key, b, expiration).Err()
 	if err != nil {
 		return fmt.Errorf("redis set error: %w", err)
@@ -121,9 +120,8 @@ func (s *RedisStore) save(session *sessions.Session) error {
 	return nil
 }
 
-func (s *RedisStore) load(session *sessions.Session) error {
+func (s *RedisStore) load(ctx context.Context, session *sessions.Session) error {
 	key := s.prefix + session.ID
-	ctx := context.Background()
 
 	data, err := s.client.Get(ctx, key).Bytes()
 	if err != nil {
@@ -136,12 +134,11 @@ func (s *RedisStore) load(session *sessions.Session) error {
 	return s.serializer.Deserialize(data, session)
 }
 
-func (s *RedisStore) delete(session *sessions.Session) error {
+func (s *RedisStore) delete(ctx context.Context, session *sessions.Session) error {
 	if session.ID == "" {
 		return nil
 	}
 	key := s.prefix + session.ID
-	ctx := context.Background()
 	return s.client.Del(ctx, key).Err()
 }
 
