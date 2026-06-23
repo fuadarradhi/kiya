@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -42,12 +43,36 @@ func (db *DB) Close() error {
 	return nil
 }
 
+// Stats returns database connection pool statistics.
+func (db *DB) Stats() sql.DBStats {
+	exec := db.executor
+	if le, ok := exec.(*LoggedExecutor); ok {
+		exec = le.inner
+	}
+	if sxe, ok := exec.(*sqlxExecutor); ok {
+		return sxe.db.Stats()
+	}
+	return sql.DBStats{}
+}
+
 func (db *DB) Insert(data any) (Result, error) {
 	tableName, err := getTableNameFromModel(data)
 	if err != nil {
 		return nil, fmt.Errorf("Insert: %w", err)
 	}
 	return db.Table(tableName).Insert(data)
+}
+
+// InsertBatch inserts multiple records in a single query.
+func (db *DB) InsertBatch(data []any) (Result, error) {
+	if len(data) == 0 {
+		return nil, errors.New("InsertBatch: data is empty")
+	}
+	tableName, err := getTableNameFromModel(data[0])
+	if err != nil {
+		return nil, fmt.Errorf("InsertBatch: %w", err)
+	}
+	return db.Table(tableName).InsertBatch(data)
 }
 
 func (db *DB) Update(data any) (Result, error) {
@@ -88,6 +113,15 @@ func (db *DB) FindAll(dest any) error {
 		return fmt.Errorf("FindAll: %w", err)
 	}
 	return db.Table(tableName).FindAll(dest)
+}
+
+// Paginate fetches a page of data and returns pagination info.
+func (db *DB) Paginate(dest any, page, perPage int) (*Pagination, error) {
+	tableName, err := getTableNameFromModel(dest)
+	if err != nil {
+		return nil, fmt.Errorf("Paginate: %w", err)
+	}
+	return db.Table(tableName).Paginate(dest, page, perPage)
 }
 
 func (db *DB) Table(name string) *Builder {

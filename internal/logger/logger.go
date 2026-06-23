@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +15,16 @@ import (
 
 	"github.com/fuadarradhi/kiya/internal/util"
 )
+
+// Config holds settings for the logger.
+type Config struct {
+	Debug   bool
+	Token   string
+	Group   string
+	LogPath string
+	WAFPath string
+	JSON    bool
+}
 
 var (
 	consoleLogger *log.Logger
@@ -29,6 +40,7 @@ var (
 	telegramToken string
 	telegramGroup string
 	isDebug       bool
+	isJSON        bool
 
 	telegramLastSent = make(map[string]time.Time)
 	telegramMutex    sync.Mutex
@@ -77,8 +89,8 @@ func init() {
 	consoleLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 }
 
-// Init menginisialisasi logger. Dipanggil oleh root package kiya.New().
-func Init(debug bool, token, group string) {
+// Init initializes the logger.
+func Init(cfg Config) {
 	logStateMu.Lock()
 	defer logStateMu.Unlock()
 
@@ -86,19 +98,29 @@ func Init(debug bool, token, group string) {
 		closeUnsafe()
 	}
 
-	isDebug = debug
-	telegramToken = token
-	telegramGroup = group
+	isDebug = cfg.Debug
+	isJSON = cfg.JSON
+	telegramToken = cfg.Token
+	telegramGroup = cfg.Group
 
 	consoleLogger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
 	if isDebug {
-		log.Print("[Goserver] Logger initialized in DEBUG mode (No file logging)")
+		log.Print("[Kiya] Logger initialized in DEBUG mode (No file logging)")
 		return
 	}
 
-	initFileLogger()
-	initWAFFileLogger()
+	logPath := cfg.LogPath
+	if logPath == "" {
+		logPath = "./temp/log"
+	}
+	wafPath := cfg.WAFPath
+	if wafPath == "" {
+		wafPath = "./temp/waf"
+	}
+
+	initFileLogger(logPath)
+	initWAFFileLogger(wafPath)
 
 	var ctx context.Context
 	ctx, telegramCancel = context.WithCancel(context.Background())
@@ -114,7 +136,7 @@ func Init(debug bool, token, group string) {
 		go logWorker()
 	}
 
-	log.Print("[Goserver] Logger initialized in PRODUCTION mode (Async File & Telegram Logging)")
+	log.Print("[Kiya] Logger initialized in PRODUCTION mode (Async File & Telegram Logging)")
 }
 
 func logWorker() {
@@ -171,6 +193,16 @@ func sanitizeLogMessage(msg string) string {
 	return msg
 }
 
+func formatJSON(level, msg string) string {
+	logData := map[string]any{
+		"level":   level,
+		"message": msg,
+		"time":    time.Now().Format(time.RFC3339),
+	}
+	b, _ := json.Marshal(logData)
+	return string(b)
+}
+
 func writeAppToFile(level string, msg string) {
 	logMutex.Lock()
 	defer logMutex.Unlock()
@@ -178,9 +210,14 @@ func writeAppToFile(level string, msg string) {
 	checkAndRotateApp()
 
 	if logFile != nil {
-		fileLine := fmt.Sprintf("%s [%s] %s\n",
-			time.Now().Format("2006/01/02 15:04:05"),
-			level, msg)
+		var fileLine string
+		if isJSON {
+			fileLine = formatJSON(level, msg) + "\n"
+		} else {
+			fileLine = fmt.Sprintf("%s [%s] %s\n",
+				time.Now().Format("2006/01/02 15:04:05"),
+				level, msg)
+		}
 		logFile.WriteString(fileLine)
 	}
 }
@@ -192,9 +229,14 @@ func writeWAFToFile(level string, msg string) {
 	checkAndRotateWAF()
 
 	if wafLogFile != nil {
-		fileLine := fmt.Sprintf("%s [%s] %s\n",
-			time.Now().Format("2006/01/02 15:04:05"),
-			level, msg)
+		var fileLine string
+		if isJSON {
+			fileLine = formatJSON(level, msg) + "\n"
+		} else {
+			fileLine = fmt.Sprintf("%s [%s] %s\n",
+				time.Now().Format("2006/01/02 15:04:05"),
+				level, msg)
+		}
 		wafLogFile.WriteString(fileLine)
 	}
 }
@@ -231,15 +273,15 @@ func cleanupTelegramCache() {
 	}
 }
 
-func initFileLogger() {
+func initFileLogger(logPath string) {
 	logMutex.Lock()
 	defer logMutex.Unlock()
 
-	os.MkdirAll("./temp/log", 0755)
+	os.MkdirAll(logPath, 0755)
 	day := time.Now().Format("2006-01-02")
 	currentDay = day
 
-	filePath := filepath.Join("./temp/log", "log-"+day+".log")
+	filePath := filepath.Join(logPath, "log-"+day+".log")
 
 	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -251,15 +293,15 @@ func initFileLogger() {
 	logFile = f
 }
 
-func initWAFFileLogger() {
+func initWAFFileLogger(wafPath string) {
 	logMutex.Lock()
 	defer logMutex.Unlock()
 
-	os.MkdirAll("./temp/waf", 0755)
+	os.MkdirAll(wafPath, 0755)
 	day := time.Now().Format("2006-01-02")
 	wafCurrentDay = day
 
-	filePath := filepath.Join("./temp/waf", "waf-"+day+".log")
+	filePath := filepath.Join(wafPath, "waf-"+day+".log")
 
 	f, err := os.OpenFile(filePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -281,7 +323,7 @@ func checkAndRotateApp() {
 		return
 	}
 
-	newFilePath := filepath.Join("./temp/log", "log-"+day+".log")
+	newFilePath := filepath.Join(filepath.Dir(logFile.Name()), "log-"+day+".log")
 	f, err := os.OpenFile(newFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
@@ -304,7 +346,7 @@ func checkAndRotateWAF() {
 		return
 	}
 
-	newFilePath := filepath.Join("./temp/waf", "waf-"+day+".log")
+	newFilePath := filepath.Join(filepath.Dir(wafLogFile.Name()), "waf-"+day+".log")
 	f, err := os.OpenFile(newFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
@@ -344,17 +386,17 @@ func logf(level string, color string, format string, v ...any) {
 	}
 }
 
-// LogInfo mencatat pesan level INFO ke console dan file (async).
+// LogInfo logs an INFO message.
 func LogInfo(format string, v ...any) {
 	logf("INFO", colorGreen, format, v...)
 }
 
-// LogWarn mencatat pesan level WARN ke console dan file (async).
+// LogWarn logs a WARN message.
 func LogWarn(format string, v ...any) {
 	logf("WARN", colorYellow, format, v...)
 }
 
-// LogError mencatat pesan level ERROR ke console, file (async), dan Telegram.
+// LogError logs an ERROR message and sends a Telegram alert.
 func LogError(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 
@@ -380,7 +422,7 @@ func LogError(format string, v ...any) {
 	}
 }
 
-// LogWAF mencatat pesan WAF/ATTACK ke console, file WAF (async), dan Telegram.
+// LogWAF logs a WAF/ATTACK message and sends a Telegram alert.
 func LogWAF(format string, v ...any) {
 	msg := fmt.Sprintf(format, v...)
 
@@ -411,7 +453,7 @@ func LogWAF(format string, v ...any) {
 	}
 }
 
-// LogTelegram mengirim alert error ke Telegram dengan info request.
+// LogTelegram sends a custom error alert to Telegram with request info.
 func LogTelegram(r *http.Request, err any) {
 	logStateMu.RLock()
 	debug := isDebug
@@ -452,7 +494,7 @@ func LogTelegram(r *http.Request, err any) {
 	}
 
 	var msg strings.Builder
-	msg.WriteString("<b>GOSERVER ALERT</b>\n\n")
+	msg.WriteString("<b>KIYA ALERT</b>\n\n")
 	msg.WriteString("<b>Request</b>\n")
 	msg.WriteString(fmt.Sprintf("%s %s\n", method, pathStr))
 	if query != "" {
@@ -497,7 +539,7 @@ func closeUnsafe() {
 	}
 }
 
-// Close menutup semua resource logger (file, channel, goroutines).
+// Close closes all logger resources.
 func Close() {
 	logStateMu.Lock()
 	defer logStateMu.Unlock()

@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fuadarradhi/kiya/internal/router"
@@ -29,16 +31,13 @@ type JsonData struct {
 }
 
 // Resources is the context for each HTTP request.
-// All fields are unexported to prevent external modification.
 type Resources struct {
-	_ [0]func() // Prevents struct literal construction
-
 	response    http.ResponseWriter
 	request     *http.Request
 	session     *Session
 	database    *DB
 	params      []router.Param
-	globals     *Globals
+	locals      *Locals
 	renderer    *web.Renderer
 	written     bool
 	aborted     bool
@@ -52,7 +51,7 @@ func (r *Resources) Response() http.ResponseWriter { return r.response }
 func (r *Resources) Request() *http.Request        { return r.request }
 func (r *Resources) Session() *Session             { return r.session }
 func (r *Resources) Database() *DB                 { return r.database }
-func (r *Resources) Globals() *Globals             { return r.globals }
+func (r *Resources) Locals() *Locals               { return r.locals }
 
 func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *web.Renderer) {
 	r.response = w
@@ -66,12 +65,12 @@ func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *we
 	r.encryptKey = nil
 	r.csrfEnabled = false
 
-	if r.globals == nil {
-		r.globals = &Globals{
+	if r.locals == nil {
+		r.locals = &Locals{
 			store: make(map[string]any),
 		}
 	} else {
-		r.globals.Clear()
+		r.locals.Clear()
 	}
 
 	r.written = false
@@ -103,7 +102,6 @@ func (r *Resources) Abort() {
 	r.aborted = true
 }
 
-// IsAborted checks if the request was aborted.
 func (r *Resources) IsAborted() bool {
 	return r.aborted
 }
@@ -216,8 +214,6 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 		}
 	}
 
-	// Render to a buffer first so a template error does not leave a half-written
-	// response with the wrong status/headers.
 	var buf bytes.Buffer
 	if err := r.renderer.Render(&buf, name, ctx); err != nil {
 		return err
@@ -247,7 +243,6 @@ func (r *Resources) Redirect(code int, redirectURL string) error {
 	}
 
 	http.Redirect(r.response, r.request, redirectURL, code)
-
 	r.written = true
 	return nil
 }
@@ -269,11 +264,9 @@ func (r *Resources) RedirectWithQuery(code int, to string, queryParams Map) erro
 	}
 
 	query := url.Values{}
-
 	for key, value := range queryParams {
 		query.Set(key, fmt.Sprintf("%v", value))
 	}
-
 	parsedURL.RawQuery = query.Encode()
 
 	http.Redirect(r.response, r.request, parsedURL.String(), code)
@@ -298,7 +291,6 @@ func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map)
 	}
 
 	query := r.request.URL.Query()
-
 	if len(queryParams) > 0 {
 		for _, params := range queryParams {
 			for key, value := range params {
@@ -306,7 +298,6 @@ func (r *Resources) RedirectWithRequery(code int, to string, queryParams ...Map)
 			}
 		}
 	}
-
 	parsedURL.RawQuery = query.Encode()
 
 	http.Redirect(r.response, r.request, parsedURL.String(), code)
@@ -371,14 +362,10 @@ func (r *Resources) Bind(v any) error {
 }
 
 func (r *Resources) Validator(val any, bind ...bool) *Validator {
-	v := &Validator{
-		res: r,
-	}
-
+	v := &Validator{res: r}
 	if val != nil {
 		v.Bind(val, bind...)
 	}
-
 	return v
 }
 
@@ -418,7 +405,6 @@ func (r *Resources) ExtractIP() string {
 	return web.ExtractIP(r.request)
 }
 
-// isValidRedirectCode checks if the code is a valid 3xx redirect code.
 func isValidRedirectCode(code int) bool {
 	return code >= 300 && code <= 399
 }
@@ -429,7 +415,6 @@ func sanitizeForJSON(v any) any {
 	}
 
 	rv := reflect.ValueOf(v)
-
 	for (rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface) && !rv.IsNil() {
 		rv = rv.Elem()
 	}
@@ -437,8 +422,7 @@ func sanitizeForJSON(v any) any {
 	switch rv.Kind() {
 	case reflect.Invalid:
 		return nil
-	case reflect.Bool,
-		reflect.String,
+	case reflect.Bool, reflect.String,
 		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Float32, reflect.Float64:
@@ -498,4 +482,126 @@ func sanitizeForJSON(v any) any {
 	default:
 		return nil
 	}
+}
+
+// Locals provides a concurrency-safe key-value store for request-local state.
+type Locals struct {
+	store map[string]any
+	mu    sync.RWMutex
+}
+
+func (g *Locals) Set(key string, value any) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.store[key] = value
+}
+
+func (g *Locals) Get(key string) any {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if val, ok := g.store[key]; ok {
+		return val
+	}
+	return nil
+}
+
+func (g *Locals) Has(key string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	_, ok := g.store[key]
+	return ok
+}
+
+func (g *Locals) Del(key string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.store, key)
+}
+
+func (g *Locals) Clear() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.store = make(map[string]any)
+}
+
+func (g *Locals) GetString(key string) string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if val, ok := g.store[key].(string); ok {
+		return val
+	}
+	return ""
+}
+
+func (g *Locals) GetInt(key string) int {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	switch v := g.store[key].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	case string:
+		i, _ := strconv.Atoi(v)
+		return i
+	}
+	return 0
+}
+
+func (g *Locals) GetInt64(key string) int64 {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	switch v := g.store[key].(type) {
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case string:
+		i, _ := strconv.ParseInt(v, 10, 64)
+		return i
+	}
+	return 0
+}
+
+func (g *Locals) GetFloat64(key string) float64 {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	switch v := g.store[key].(type) {
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	}
+	return 0
+}
+
+func (g *Locals) GetBool(key string) bool {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	switch v := g.store[key].(type) {
+	case bool:
+		return v
+	case string:
+		b, _ := strconv.ParseBool(v)
+		return b
+	case int:
+		return v != 0
+	case float64:
+		return v != 0
+	}
+	return false
+}
+
+func (g *Locals) GetTime(key string) time.Time {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if val, ok := g.store[key].(time.Time); ok {
+		return val
+	}
+	return time.Time{}
 }

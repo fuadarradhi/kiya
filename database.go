@@ -31,10 +31,13 @@ type DB = db.DB
 // Builder is an alias for db.Builder. All fields are unexported.
 type Builder = db.Builder
 
+// Pagination is an alias for db.Pagination
+type Pagination = db.Pagination
+
 // NewDatabase creates a new database connection based on the provided config.
 func NewDatabase(cfg DatabaseConfig) (*DB, error) {
 	if !cfg.Enabled {
-		logger.LogInfo("[Goserver] Database is disabled via config")
+		logger.LogInfo("[Kiya] Database is disabled via config")
 		return nil, nil
 	}
 
@@ -73,12 +76,12 @@ func NewDatabase(cfg DatabaseConfig) (*DB, error) {
 			host, cfg.Port, cfg.User, cfg.Password, cfg.Name, sslMode, tz)
 
 	default:
-		return nil, fmt.Errorf("driver database tidak didukung: '%s'. Hanya 'mysql' atau 'postgres' yang tersedia", cfg.Driver)
+		return nil, fmt.Errorf("unsupported database driver: '%s'. Only 'mysql' or 'postgres' are available", cfg.Driver)
 	}
 
 	sqlxDB, err := sqlx.Connect(driverName, dsn)
 	if err != nil {
-		return nil, fmt.Errorf("gagal membuat koneksi database (%s): %w", cfg.Driver, err)
+		return nil, fmt.Errorf("failed to create database connection (%s): %w", cfg.Driver, err)
 	}
 
 	maxOpen := cfg.MaxOpenConns
@@ -100,10 +103,10 @@ func NewDatabase(cfg DatabaseConfig) (*DB, error) {
 	sqlxDB.SetConnMaxLifetime(connMaxLifetime)
 
 	if err := sqlxDB.Ping(); err != nil {
-		return nil, fmt.Errorf("gagal melakukan ping ke database (%s): %w", cfg.Driver, err)
+		return nil, fmt.Errorf("failed to ping database (%s): %w", cfg.Driver, err)
 	}
 
-	logger.LogInfo("[Goserver] Database connected | Driver: %s | Host: %s:%s | DB: %s | TZ: %s", cfg.Driver, host, cfg.Port, cfg.Name, tz)
+	logger.LogInfo("[Kiya] Database connected | Driver: %s | Host: %s:%s | DB: %s | TZ: %s", cfg.Driver, host, cfg.Port, cfg.Name, tz)
 
 	var dbDefaultCond db.DefaultConditionFunc
 	if cfg.DefaultCondition != nil {

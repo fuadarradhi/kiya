@@ -2,6 +2,7 @@ package kiya
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -22,13 +23,12 @@ import (
 	"github.com/fuadarradhi/kiya/internal/web"
 )
 
-// NOTE: HandlerFunc, Middleware, GroupFunc, Session and HTTPError are declared in types.go.
+type contextKey string
+
+const RequestIDKey contextKey = "request_id"
 
 // Router is the main HTTP router and framework entrypoint.
-// All fields are unexported to prevent external modification.
 type Router struct {
-	_ [0]func() // Prevents struct literal construction
-
 	tree         *router.Tree
 	middleware   []Middleware
 	errorHandler func(*Resources, int, string, error)
@@ -41,7 +41,7 @@ type Router struct {
 	addr         string
 	waf          coraza.WAF
 	database     *DB
-	sessionStore *sessions.CookieStore
+	sessionStore sessions.Store
 	renderer     *web.Renderer
 
 	rateLimiter      *security.Store
@@ -58,10 +58,21 @@ type Router struct {
 
 	csrfEnabled     bool
 	csrfExemptPaths []string
+
+	csp            string
+	cspExemptPaths []string
+	wafExemptPaths []string
+
+	corsConfig         CORSConfig
+	compressionEnabled bool
+	compressionLevel   int
+	requestIDEnabled   bool
+
+	routeNames      map[string]string
+	healthCheckPath string
 }
 
 // adapterFunc converts a kiya.HandlerFunc to an internal router.HandlerFunc.
-// It casts the generic `any` context back to *kiya.Resources.
 func adapterFunc(h HandlerFunc) router.HandlerFunc {
 	return func(c any) error {
 		if res, ok := c.(*Resources); ok {
@@ -88,52 +99,93 @@ func (r *Router) SetNoMethod(h HandlerFunc)                               { r.no
 
 func (r *Router) Use(m ...Middleware) {
 	r.middleware = append(r.middleware, m...)
-
-	// Update middleware on the existing tree (keeps already-registered routes).
-	internalMws := make([]router.Middleware, len(r.middleware))
-	for i, mw := range r.middleware {
-		internalMws[i] = adapterMiddleware(mw)
-	}
-	r.tree.SetMiddleware(internalMws)
 }
 
 func (r *Router) Route(prefix string, fn GroupFunc) {
 	sub := &Router{
-		tree:              r.tree,
-		middleware:        append([]Middleware{}, r.middleware...),
-		errorHandler:      r.errorHandler,
-		prefix:            r.prefix + prefix,
-		resPool:           r.resPool,
-		waf:               r.waf,
-		sessionStore:      r.sessionStore,
-		database:          r.database,
-		renderer:          r.renderer,
-		rateLimiter:       r.rateLimiter,
-		keyFunc:           r.keyFunc,
-		forceHTTPS:        r.forceHTTPS,
-		debug:             r.debug,
-		maxWAFBufferSize:  r.maxWAFBufferSize,
-		sessionMaxAge:     r.sessionMaxAge,
-		encryptKey:        r.encryptKey,
-		cachePaths:        r.cachePaths,
-		noLogSuccessPaths: r.noLogSuccessPaths,
-		csrfEnabled:       r.csrfEnabled,
-		csrfExemptPaths:   r.csrfExemptPaths,
+		tree:               r.tree,
+		middleware:         append([]Middleware{}, r.middleware...),
+		errorHandler:       r.errorHandler,
+		noRoute:            r.noRoute,
+		noMethod:           r.noMethod,
+		prefix:             r.prefix + prefix,
+		resPool:            r.resPool,
+		waf:                r.waf,
+		sessionStore:       r.sessionStore,
+		database:           r.database,
+		renderer:           r.renderer,
+		rateLimiter:        r.rateLimiter,
+		keyFunc:            r.keyFunc,
+		forceHTTPS:         r.forceHTTPS,
+		debug:              r.debug,
+		maxWAFBufferSize:   r.maxWAFBufferSize,
+		sessionMaxAge:      r.sessionMaxAge,
+		encryptKey:         r.encryptKey,
+		cachePaths:         r.cachePaths,
+		noLogSuccessPaths:  r.noLogSuccessPaths,
+		csrfEnabled:        r.csrfEnabled,
+		csrfExemptPaths:    r.csrfExemptPaths,
+		csp:                r.csp,
+		cspExemptPaths:     r.cspExemptPaths,
+		wafExemptPaths:     r.wafExemptPaths,
+		corsConfig:         r.corsConfig,
+		compressionEnabled: r.compressionEnabled,
+		compressionLevel:   r.compressionLevel,
+		requestIDEnabled:   r.requestIDEnabled,
+		routeNames:         r.routeNames,
+		healthCheckPath:    r.healthCheckPath,
+		sameSite:           r.sameSite,
 	}
 	fn(sub)
 }
 
-func (r *Router) Get(path string, h HandlerFunc)     { r.addRoute(http.MethodGet, path, h) }
-func (r *Router) Post(path string, h HandlerFunc)    { r.addRoute(http.MethodPost, path, h) }
-func (r *Router) Put(path string, h HandlerFunc)     { r.addRoute(http.MethodPut, path, h) }
-func (r *Router) Delete(path string, h HandlerFunc)  { r.addRoute(http.MethodDelete, path, h) }
-func (r *Router) Patch(path string, h HandlerFunc)   { r.addRoute(http.MethodPatch, path, h) }
-func (r *Router) Options(path string, h HandlerFunc) { r.addRoute(http.MethodOptions, path, h) }
-func (r *Router) Head(path string, h HandlerFunc)    { r.addRoute(http.MethodHead, path, h) }
+func (r *Router) Get(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodGet, path, h, name...)
+}
+func (r *Router) Post(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodPost, path, h, name...)
+}
+func (r *Router) Put(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodPut, path, h, name...)
+}
+func (r *Router) Delete(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodDelete, path, h, name...)
+}
+func (r *Router) Patch(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodPatch, path, h, name...)
+}
+func (r *Router) Options(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodOptions, path, h, name...)
+}
+func (r *Router) Head(path string, h HandlerFunc, name ...string) {
+	r.addRoute(http.MethodHead, path, h, name...)
+}
 
-func (r *Router) addRoute(method, path string, h HandlerFunc) {
+func (r *Router) addRoute(method, path string, h HandlerFunc, name ...string) {
 	fullPath := r.prefix + path
-	r.tree.AddRoute(method, fullPath, adapterFunc(h))
+
+	// Pre-compute middleware chain per route registration
+	fullHandler := chain(h, r.middleware...)
+	r.tree.AddRoute(method, fullPath, fullHandler)
+
+	if len(name) > 0 && name[0] != "" {
+		r.routeNames[name[0]] = fullPath
+	}
+}
+
+// URL generates a URL for a named route with optional parameters.
+func (r *Router) URL(name string, params ...Map) string {
+	path, ok := r.routeNames[name]
+	if !ok {
+		return ""
+	}
+
+	if len(params) > 0 {
+		for k, v := range params[0] {
+			path = strings.ReplaceAll(path, ":"+k, fmt.Sprintf("%v", v))
+		}
+	}
+	return path
 }
 
 func (r *Router) Static(prefix, root string) error {
@@ -159,15 +211,32 @@ func (r *Router) Redirect(path, target string, code int) {
 	})
 }
 
+// generateRequestID generates a random 16-byte hex string.
+func generateRequestID() string {
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x", b)
+}
+
 func (r *Router) createRootHandler() http.Handler {
 	rootHandler := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		r.serveInternal(w, req)
 	})
 
-	if r.waf != nil {
-		return router.WrapWithWAF(rootHandler, r.waf, r.maxWAFBufferSize)
+	if r.waf == nil {
+		return rootHandler
 	}
-	return rootHandler
+
+	// Wrap with WAF, but allow skipping for certain paths (e.g., large file uploads)
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		for _, p := range r.wafExemptPaths {
+			if strings.HasPrefix(req.URL.Path, p) {
+				rootHandler.ServeHTTP(w, req)
+				return
+			}
+		}
+		router.WrapWithWAF(rootHandler, r.waf, r.maxWAFBufferSize).ServeHTTP(w, req)
+	})
 }
 
 // serveInternal is the core HTTP request handler.
@@ -178,6 +247,58 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		}
 	}()
+
+	// Request ID
+	reqID := req.Header.Get("X-Request-Id")
+	if reqID == "" {
+		reqID = generateRequestID()
+	}
+	w.Header().Set("X-Request-Id", reqID)
+	ctx := context.WithValue(req.Context(), RequestIDKey, reqID)
+	req = req.WithContext(ctx)
+
+	// CORS
+	if r.corsConfig.Enabled {
+		origin := req.Header.Get("Origin")
+		if origin != "" {
+			allowed := false
+			if len(r.corsConfig.AllowOrigins) == 0 {
+				allowed = true
+			} else {
+				for _, o := range r.corsConfig.AllowOrigins {
+					if o == "*" || o == origin {
+						allowed = true
+						break
+					}
+				}
+			}
+
+			if allowed {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				if r.corsConfig.AllowCredentials {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+
+				if req.Method == http.MethodOptions {
+					if len(r.corsConfig.AllowMethods) > 0 {
+						w.Header().Set("Access-Control-Allow-Methods", strings.Join(r.corsConfig.AllowMethods, ", "))
+					}
+					if len(r.corsConfig.AllowHeaders) > 0 {
+						w.Header().Set("Access-Control-Allow-Headers", strings.Join(r.corsConfig.AllowHeaders, ", "))
+					}
+					if r.corsConfig.MaxAge > 0 {
+						w.Header().Set("Access-Control-Max-Age", fmt.Sprintf("%d", int(r.corsConfig.MaxAge.Seconds())))
+					}
+					w.WriteHeader(http.StatusNoContent)
+					return
+				}
+
+				if len(r.corsConfig.ExposeHeaders) > 0 {
+					w.Header().Set("Access-Control-Expose-Headers", strings.Join(r.corsConfig.ExposeHeaders, ", "))
+				}
+			}
+		}
+	}
 
 	if r.forceHTTPS {
 		isSecure := req.TLS != nil || req.Header.Get("X-Forwarded-Proto") == "https"
@@ -198,6 +319,20 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 	}
 
+	// CSP Header
+	if r.csp != "" {
+		isExempt := false
+		for _, p := range r.cspExemptPaths {
+			if strings.HasPrefix(req.URL.Path, p) {
+				isExempt = true
+				break
+			}
+		}
+		if !isExempt {
+			h.Set("Content-Security-Policy", r.csp)
+		}
+	}
+
 	if r.shouldCache(req.URL.Path) {
 		h.Set("Cache-Control", "public, max-age=3600")
 	} else {
@@ -212,9 +347,9 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		r.resPool.Put(res)
 	}()
 
-	ctx, cancel := context.WithCancel(req.Context())
+	reqCtx, cancel := context.WithCancel(req.Context())
 	defer cancel()
-	req = req.WithContext(ctx)
+	req = req.WithContext(reqCtx)
 
 	res.reset(w, req, r.renderer)
 	res.encryptKey = r.encryptKey
@@ -226,6 +361,7 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
+	// FIX 1.1: Use saveErr instead of err
 	defer func() {
 		if res.Session() != nil {
 			if saveErr := res.Session().Save(); saveErr != nil {
@@ -294,7 +430,7 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 
 	handler, params := r.tree.FindRoute(req.Method, req.URL.Path)
 
-	var finalHandler HandlerFunc
+	var finalHandler router.HandlerFunc
 	if handler == nil {
 		if r.tree.AnyMethodExists(req.URL.Path) {
 			finalHandler = chain(r.noMethod, r.middleware...)
@@ -303,12 +439,10 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 		res.params = params
-		finalHandler = func(r2 *Resources) error {
-			return handler(r2)
-		}
+		finalHandler = handler
 	}
 
-	// Wrap response writer to record status code (skip if already wrapped, e.g. by WAF).
+	// Wrap response writer to record status code
 	var statusRec router.StatusRecorder
 	if _, ok := w.(router.WrittenChecker); !ok {
 		rec := router.NewStatusRecorder(w)
@@ -336,27 +470,33 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 
 	if shouldLog {
 		if statusCode >= 400 {
-			logger.LogError("%s %s %d", req.Method, req.URL.Path, statusCode)
+			logger.LogError("%s %s %d [%s]", req.Method, req.URL.Path, statusCode, reqID)
 		} else if r.debug {
-			logger.LogInfo("%s %s %d", req.Method, req.URL.Path, statusCode)
+			logger.LogInfo("%s %s %d [%s]", req.Method, req.URL.Path, statusCode, reqID)
 		}
 	}
 }
 
-// chain links middleware together.
-func chain(h HandlerFunc, m ...Middleware) HandlerFunc {
+// chain links middleware together efficiently (pre-computed).
+// It accepts kiya.HandlerFunc and kiya.Middleware, and returns an internal router.HandlerFunc.
+func chain(h HandlerFunc, m ...Middleware) router.HandlerFunc {
 	if h == nil {
 		return nil
 	}
-	next := h
+
+	// Convert the base kiya handler to internal router handler
+	next := adapterFunc(h)
+
 	for i := len(m) - 1; i >= 0; i-- {
 		mw := m[i]
-		currentNext := next
-		next = func(c *Resources) error {
-			if c.IsAborted() {
+		// Pre-compute the wrapped handler using the adapter
+		wrapped := adapterMiddleware(mw)(next)
+
+		next = func(c any) error {
+			if ctx, ok := c.(interface{ IsAborted() bool }); ok && ctx.IsAborted() {
 				return nil
 			}
-			return mw(currentNext)(c)
+			return wrapped(c)
 		}
 	}
 	return next
@@ -396,10 +536,16 @@ func (r *Router) handleError(c *Resources, err error) {
 
 func (r *Router) defaultErrorHandler(c *Resources, code int, msg string, err error) {
 	if c.IsAJAX() {
-		c.APIResponse(code, msg, map[string][]string{}, []string{})
+		c.APIResponse(code, http.StatusText(code), map[string][]string{}, []string{})
 		return
 	}
-	c.String(code, fmt.Sprintf("%d %s\n\n%s", code, http.StatusText(code), msg))
+
+	// FIX 3.7: Prevent info leak in production
+	if r.debug {
+		c.String(code, fmt.Sprintf("%d %s\n\n%s", code, http.StatusText(code), msg))
+	} else {
+		c.String(code, fmt.Sprintf("%d %s", code, http.StatusText(code)))
+	}
 }
 
 func (r *Router) defaultNoRoute(c *Resources) error {

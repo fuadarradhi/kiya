@@ -20,6 +20,11 @@ type Config struct {
 	Encryption        EncryptionConfig
 	CachePaths        []string
 	NoLogSuccessPaths []string
+	Log               LogConfig
+	Security          SecurityConfig
+	CORS              CORSConfig
+	Compression       CompressionConfig
+	HealthCheck       HealthCheckConfig
 }
 
 // TelegramConfig holds Telegram bot notification settings.
@@ -39,11 +44,26 @@ type ServerConfig struct {
 	SessionSecret     string
 	SessionEnabled    bool
 	SessionMaxAge     int
+	SessionStore      SessionStoreConfig
 	MaxWAFBufferSize  int64
 	ForceHTTPS        bool
 	TrustProxyHeaders bool
 	CSRFEnabled       bool
 	CSRFExemptPaths   []string
+	SameSite          string // "lax", "strict", "none", or "" for default (lax)
+}
+
+// SessionStoreConfig configures the session store backend.
+type SessionStoreConfig struct {
+	Type  string // "cookie" (default) or "redis"
+	Redis RedisConfig
+}
+
+// RedisConfig holds Redis connection settings for session storage.
+type RedisConfig struct {
+	Addr     string
+	Password string
+	DB       int
 }
 
 // DatabaseConfig holds database connection settings.
@@ -80,4 +100,41 @@ type RateLimiterConfig struct {
 // EncryptionConfig holds encryption key settings.
 type EncryptionConfig struct {
 	Key string
+}
+
+// LogConfig holds logging settings.
+type LogConfig struct {
+	Path    string // directory for log files (default: "./temp/log")
+	WAFPath string // directory for WAF log files (default: "./temp/waf")
+	JSON    bool   // output logs in JSON format for log aggregation
+}
+
+// SecurityConfig holds security header and WAF settings.
+type SecurityConfig struct {
+	CSP            string   // Content-Security-Policy header value (empty = disabled)
+	CSPExemptPaths []string // paths that skip CSP header
+	WAFExemptPaths []string // paths that skip WAF inspection (e.g., file upload endpoints)
+}
+
+// CORSConfig holds Cross-Origin Resource Sharing settings.
+type CORSConfig struct {
+	Enabled          bool
+	AllowOrigins     []string
+	AllowMethods     []string
+	AllowHeaders     []string
+	ExposeHeaders    []string
+	AllowCredentials bool
+	MaxAge           time.Duration
+}
+
+// CompressionConfig holds response compression settings.
+type CompressionConfig struct {
+	Enabled bool
+	Level   int // gzip compression level (1-9), default 5 if enabled and 0
+}
+
+// HealthCheckConfig holds health check endpoint settings.
+type HealthCheckConfig struct {
+	Enabled bool
+	Path    string // default: "/health"
 }

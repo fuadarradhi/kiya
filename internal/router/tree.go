@@ -1,7 +1,6 @@
 package router
 
 import (
-	"fmt"
 	"path"
 	"regexp"
 	"strings"
@@ -42,22 +41,15 @@ type Param struct {
 
 // Tree holds the routing trees for different HTTP methods.
 type Tree struct {
-	roots      map[string]*node
-	middleware []Middleware
-	mu         sync.RWMutex
+	roots map[string]*node
+	mu    sync.RWMutex
 }
 
 // NewTree creates a new routing tree.
-func NewTree(middleware []Middleware) *Tree {
+func NewTree() *Tree {
 	return &Tree{
-		roots:      make(map[string]*node),
-		middleware: middleware,
+		roots: make(map[string]*node),
 	}
-}
-
-// SetMiddleware updates the middleware chain for the tree.
-func (t *Tree) SetMiddleware(mws []Middleware) {
-	t.middleware = mws
 }
 
 // AddRoute registers a new route in the tree.
@@ -104,8 +96,9 @@ func (t *Tree) AddRoute(method, path string, h HandlerFunc) {
 				}
 
 				if isConflict {
+					// FIX 5.7: Do not panic, skip registration instead
 					logger.LogError("ROUTE CONFLICT: Cannot register '%s'. Segment '%s' conflicts with existing '%s'.", fullPath, seg, c.part)
-					panic(fmt.Sprintf("route conflict: %s", fullPath))
+					return
 				}
 			}
 
@@ -140,10 +133,7 @@ func (t *Tree) FindRoute(method, path string) (HandlerFunc, []Param) {
 	var params []Param
 
 	h := t.search(root, segments, &params)
-	if h != nil {
-		return chain(h, t.middleware...), params
-	}
-	return nil, params
+	return h, params
 }
 
 func (t *Tree) search(n *node, segments []string, params *[]Param) HandlerFunc {
@@ -213,28 +203,6 @@ func (t *Tree) findRouteInRoot(root *node, path string) (HandlerFunc, []Param) {
 	var params []Param
 	h := t.search(root, segments, &params)
 	return h, params
-}
-
-func chain(h HandlerFunc, m ...Middleware) HandlerFunc {
-	if h == nil {
-		return nil
-	}
-
-	next := h
-
-	for i := len(m) - 1; i >= 0; i-- {
-		mw := m[i]
-		currentNext := next
-
-		next = func(c any) error {
-			if ctx, ok := c.(interface{ IsAborted() bool }); ok && ctx.IsAborted() {
-				return nil
-			}
-			return mw(currentNext)(c)
-		}
-	}
-
-	return next
 }
 
 func parseSegment(seg string) *node {

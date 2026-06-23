@@ -61,7 +61,7 @@ func RegisterRules(name string, fn func(v *Validator, param string) RulesFunc) {
 	defer validatorMu.Unlock()
 
 	if _, exists := validator[name]; exists {
-		LogWarn("[Validator] Rule '%s' sudah ada, akan ditimpa", name)
+		LogWarn("[Validator] Rule '%s' already exists, it will be overwritten", name)
 	}
 
 	validator[name] = fn
@@ -182,15 +182,15 @@ func (v *Validator) Bind(form any, bind ...bool) *Validator {
 func valUnique(v *Validator, param string) RulesFunc {
 	return func(val any) error {
 		if v.uniqueTable == "" {
-			return errors.New("configurasi validator: tabel belum diset")
+			return errors.New("validator configuration: table not set")
 		}
 
 		if !validColumnNameRegex.MatchString(param) {
-			return fmt.Errorf("nama kolom tidak valid: %s", param)
+			return fmt.Errorf("invalid column name: %s", param)
 		}
 
 		if v.res.Database() == nil {
-			return errors.New("database tidak tersedia")
+			return errors.New("database not available")
 		}
 
 		var found bool
@@ -200,7 +200,7 @@ func valUnique(v *Validator, param string) RulesFunc {
 
 		if v.pkCol != "" && v.pkVal != nil && !reflect.ValueOf(v.pkVal).IsZero() {
 			if !validColumnNameRegex.MatchString(v.pkCol) {
-				return errors.New("configurasi validator: kolom primary key tidak valid")
+				return errors.New("validator configuration: invalid primary key column")
 			}
 			found, err = builder.
 				Where(fmt.Sprintf("%s != ? AND %s = ?", v.pkCol, param), v.pkVal, val).
@@ -213,11 +213,11 @@ func valUnique(v *Validator, param string) RulesFunc {
 
 		if err != nil {
 			LogError("[Validator] Unique check DB error: %v", err)
-			return errors.New("gagal memvalidasi data")
+			return errors.New("failed to validate data")
 		}
 
 		if found {
-			return errors.New("sudah digunakan")
+			return errors.New("already in use")
 		}
 		return nil
 	}
@@ -383,7 +383,7 @@ func (v *Validator) Error(field string, err string) *Validator {
 
 func (v *Validator) Errors() error {
 	return v.res.APIResponse(http.StatusUnprocessableEntity,
-		"terdapat kesalahan pada inputan Anda, silahkan periksa dan ulangi kembali",
+		"there are errors in your input, please check and try again",
 		v.validateErrors, []string{},
 	)
 }
@@ -392,13 +392,13 @@ func valRequired(v *Validator, param string) RulesFunc {
 	return func(val any) error {
 		if str, ok := val.(string); ok {
 			if len(str) == 0 {
-				return errors.New("harus diisi")
+				return errors.New("is required")
 			}
 		}
 
 		if t, ok := val.(time.Time); ok {
 			if t.IsZero() {
-				return errors.New("harus diisi")
+				return errors.New("is required")
 			}
 		}
 
@@ -407,16 +407,16 @@ func valRequired(v *Validator, param string) RulesFunc {
 		}
 
 		if val == nil {
-			return errors.New("harus diisi")
+			return errors.New("is required")
 		}
 
 		rv := reflect.ValueOf(val)
 		if (rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface) && rv.IsNil() {
-			return errors.New("harus diisi")
+			return errors.New("is required")
 		}
 
 		if isEmpty(val) {
-			return errors.New("harus diisi")
+			return errors.New("is required")
 		}
 
 		return nil
@@ -427,11 +427,11 @@ func valSecPass(v *Validator, param string) RulesFunc {
 	return func(val any) error {
 		str, ok := val.(string)
 		if !ok {
-			return errors.New("format password salah")
+			return errors.New("invalid password format")
 		}
 
 		if len(str) < 8 {
-			return errors.New("password minimal 8 karakter")
+			return errors.New("password must be at least 8 characters")
 		}
 
 		var (
@@ -455,7 +455,7 @@ func valSecPass(v *Validator, param string) RulesFunc {
 		}
 
 		if !hasUpper || !hasLower || !hasNumber || !hasSymbol {
-			return errors.New("password harus mengandung huruf besar, huruf kecil, angka, dan simbol")
+			return errors.New("password must contain uppercase, lowercase, numbers, and symbols")
 		}
 
 		return nil
@@ -470,16 +470,16 @@ func valEmail(v *Validator, param string) RulesFunc {
 
 		str, ok := val.(string)
 		if !ok {
-			return errors.New("format email tidak valid")
+			return errors.New("invalid email format")
 		}
 
 		e, err := mail.ParseAddress(str)
 		if err != nil {
-			return errors.New("email tidak valid")
+			return errors.New("email is not valid")
 		}
 
 		if e.Address == "" {
-			return errors.New("email tidak valid")
+			return errors.New("email is not valid")
 		}
 
 		return nil
@@ -494,12 +494,12 @@ func valUrl(v *Validator, param string) RulesFunc {
 
 		str, ok := val.(string)
 		if !ok {
-			return errors.New("url tidak valid")
+			return errors.New("invalid url")
 		}
 
 		u, err := url.ParseRequestURI(str)
 		if err != nil {
-			return errors.New("url tidak valid")
+			return errors.New("invalid url")
 		}
 
 		allowedSchemes := map[string]bool{
@@ -510,7 +510,7 @@ func valUrl(v *Validator, param string) RulesFunc {
 		}
 
 		if !allowedSchemes[u.Scheme] {
-			return errors.New("url tidak valid: skema tidak diizinkan")
+			return errors.New("invalid url: scheme not allowed")
 		}
 
 		return nil
@@ -533,10 +533,10 @@ func valNumeric(v *Validator, param string) RulesFunc {
 
 		if str, ok := val.(string); ok {
 			if _, err := strconv.ParseFloat(str, 64); err != nil {
-				return errors.New("harus berupa angka")
+				return errors.New("must be a number")
 			}
 		} else {
-			return errors.New("harus berupa angka")
+			return errors.New("must be a number")
 		}
 		return nil
 	}
@@ -559,7 +559,7 @@ func valLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) != p {
-			return fmt.Errorf("harus %d karakter", p)
+			return fmt.Errorf("must be %d characters", p)
 		}
 		return nil
 	}
@@ -582,7 +582,7 @@ func valOpLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) != p {
-			return fmt.Errorf("harus %d karakter", p)
+			return fmt.Errorf("must be %d characters", p)
 		}
 		return nil
 	}
@@ -605,7 +605,7 @@ func valMaxLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) > p {
-			return fmt.Errorf("maksimal %d karakter", p)
+			return fmt.Errorf("maximum %d characters", p)
 		}
 		return nil
 	}
@@ -628,7 +628,7 @@ func valMinLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) < p {
-			return fmt.Errorf("minimal %d karakter", p)
+			return fmt.Errorf("minimum %d characters", p)
 		}
 		return nil
 	}

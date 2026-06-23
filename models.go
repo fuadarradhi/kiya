@@ -2,6 +2,7 @@ package kiya
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"reflect"
 
@@ -103,6 +104,10 @@ func (b *BaseModel) Cols(cols ...string) *Builder {
 
 func (b *BaseModel) Nullable(cols ...string) *Builder {
 	return b.newBuilder().Nullable(cols...)
+}
+
+func (b *BaseModel) WithoutDefaultCondition() *Builder {
+	return b.newBuilder().WithoutDefaultCondition()
 }
 
 func (b *BaseModel) Where(expr string, args ...any) *Builder {
@@ -213,6 +218,10 @@ func (b *BaseModel) FindAll() error {
 	return b.newBuilder().FindAll()
 }
 
+func (b *BaseModel) Paginate(page, perPage int) (*db.Pagination, error) {
+	return b.newBuilder().Paginate(b.__self, page, perPage)
+}
+
 func (b *BaseModel) Count() (int64, error) {
 	return b.newBuilder().Count()
 }
@@ -239,4 +248,12 @@ func (b *BaseModel) Table(name string) *Builder {
 		return nil
 	}
 	return b.__db.Table(name).SetResources(b.__res)
+}
+
+// Stats returns database connection pool statistics.
+func (b *BaseModel) Stats() sql.DBStats {
+	if b.__db == nil {
+		return sql.DBStats{}
+	}
+	return b.__db.Stats()
 }

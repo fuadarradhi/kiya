@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,11 +28,39 @@ func New(cfg Config) (*Router, error) {
 	addr := fmt.Sprintf("%s:%d", host, cfg.Server.Port)
 
 	util.TrustProxyHeaders.Store(cfg.Server.TrustProxyHeaders)
-	logger.Init(cfg.Debug, cfg.Telegram.Token, cfg.Telegram.Group)
+
+	// Initialize logger with configurable path and format
+	logPath := cfg.Log.Path
+	if logPath == "" {
+		logPath = "./temp/log"
+	}
+	wafLogPath := cfg.Log.WAFPath
+	if wafLogPath == "" {
+		wafLogPath = "./temp/waf"
+	}
+	logger.Init(logger.Config{
+		Debug:   cfg.Debug,
+		Token:   cfg.Telegram.Token,
+		Group:   cfg.Telegram.Group,
+		LogPath: logPath,
+		WAFPath: wafLogPath,
+		JSON:    cfg.Log.JSON,
+	})
 
 	database, err := NewDatabase(cfg.Database)
 	if err != nil {
 		return nil, fmt.Errorf("initialize database: %w", err)
+	}
+
+	// Parse SameSite mode from config string
+	var sameSite http.SameSite
+	switch strings.ToLower(cfg.Server.SameSite) {
+	case "strict":
+		sameSite = http.SameSiteStrictMode
+	case "none":
+		sameSite = http.SameSiteNoneMode
+	default:
+		sameSite = http.SameSiteLaxMode
 	}
 
 	r := &Router{
@@ -40,12 +69,31 @@ func New(cfg Config) (*Router, error) {
 		debug:      cfg.Debug,
 		forceHTTPS: cfg.Server.ForceHTTPS,
 		renderer:   web.NewRenderer(cfg.View.FS),
-		sameSite:   http.SameSiteLaxMode,
+		sameSite:   sameSite,
 
 		csrfEnabled:     cfg.Server.CSRFEnabled,
 		csrfExemptPaths: cfg.Server.CSRFExemptPaths,
+
+		// Security config
+		csp:            cfg.Security.CSP,
+		cspExemptPaths: cfg.Security.CSPExemptPaths,
+		wafExemptPaths: cfg.Security.WAFExemptPaths,
+
+		// Feature configs
+		corsConfig:         cfg.CORS,
+		compressionEnabled: cfg.Compression.Enabled,
+		requestIDEnabled:   true,
 	}
 
+	// Set compression level with default
+	if cfg.Compression.Enabled {
+		r.compressionLevel = cfg.Compression.Level
+		if r.compressionLevel == 0 {
+			r.compressionLevel = 5
+		}
+	}
+
+	// Encryption key setup
 	if cfg.Encryption.Key != "" {
 		hash := sha256.Sum256([]byte(cfg.Encryption.Key))
 		r.encryptKey = hash[:]
@@ -54,11 +102,11 @@ func New(cfg Config) (*Router, error) {
 		logger.LogInfo("Encryption disabled (no key configured)")
 	}
 
+	// Session store setup (Cookie or Redis)
 	if cfg.Server.SessionEnabled {
 		if cfg.Server.SessionSecret == "" {
 			return nil, errors.New("session secret cannot be empty when sessions are enabled")
 		}
-		store := sessions.NewCookieStore([]byte(cfg.Server.SessionSecret))
 
 		sessionMaxAge := cfg.Server.SessionMaxAge
 		if sessionMaxAge <= 0 {
@@ -66,24 +114,47 @@ func New(cfg Config) (*Router, error) {
 		}
 		r.sessionMaxAge = sessionMaxAge
 
-		store.Options = &sessions.Options{
-			Path:     "/",
-			MaxAge:   r.sessionMaxAge,
-			HttpOnly: true,
-			Secure:   true,
-			SameSite: r.sameSite,
+		switch cfg.Server.SessionStore.Type {
+		case "redis":
+			store, err := security.NewRedisStore(
+				cfg.Server.SessionStore.Redis.Addr,
+				cfg.Server.SessionStore.Redis.Password,
+				cfg.Server.SessionStore.Redis.DB,
+				[]byte(cfg.Server.SessionSecret),
+				sessionMaxAge,
+				sameSite,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("create redis session store: %w", err)
+			}
+			r.sessionStore = store
+			logger.LogInfo("Session enabled (Redis store) | Addr: %s | DB: %d",
+				cfg.Server.SessionStore.Redis.Addr, cfg.Server.SessionStore.Redis.DB)
+
+		default:
+			store := sessions.NewCookieStore([]byte(cfg.Server.SessionSecret))
+			store.Options = &sessions.Options{
+				Path:     "/",
+				MaxAge:   sessionMaxAge,
+				HttpOnly: true,
+				Secure:   true,
+				SameSite: sameSite,
+			}
+			r.sessionStore = store
+			logger.LogInfo("Session enabled (Cookie store)")
 		}
-		r.sessionStore = store
 	} else {
-		logger.LogInfo("Session Disabled via config")
+		logger.LogInfo("Session disabled via config")
 	}
 
+	// WAF initialization
 	wafInstance, err := router.InitWAF(cfg.Debug)
 	if err != nil {
 		logger.LogWarn("Failed to initialize WAF: %v. Server running WITHOUT WAF protection.", err)
 	}
 	r.waf = wafInstance
 
+	// HTTP server timeouts with defaults
 	readTimeout := cfg.Server.ReadTimeout
 	if readTimeout == 0 {
 		readTimeout = 30 * time.Second
@@ -101,6 +172,7 @@ func New(cfg Config) (*Router, error) {
 		readHeaderTimeout = 10 * time.Second
 	}
 
+	// Cache and log-skip paths
 	cachePaths := cfg.CachePaths
 	if len(cachePaths) == 0 {
 		cachePaths = []string{"/assets"}
@@ -109,15 +181,17 @@ func New(cfg Config) (*Router, error) {
 	if len(noLogPaths) == 0 {
 		noLogPaths = []string{"/assets"}
 	}
+	r.cachePaths = cachePaths
+	r.noLogSuccessPaths = noLogPaths
+
+	// WAF buffer size
 	maxWAFBuffer := cfg.Server.MaxWAFBufferSize
 	if maxWAFBuffer <= 0 {
 		maxWAFBuffer = 10 << 20
 	}
-
 	r.maxWAFBufferSize = maxWAFBuffer
-	r.cachePaths = cachePaths
-	r.noLogSuccessPaths = noLogPaths
 
+	// Rate limiter
 	if cfg.RateLimiter.Enabled {
 		rate := cfg.RateLimiter.Rate
 		if rate <= 0 {
@@ -148,19 +222,26 @@ func New(cfg Config) (*Router, error) {
 			}
 		}
 	} else {
-		logger.LogInfo("Rate Limiter Disabled via config")
+		logger.LogInfo("Rate limiter disabled via config")
 	}
 
+	// Resource pool for per-request allocation
 	r.resPool = &sync.Pool{
 		New: func() any {
 			return &Resources{}
 		},
 	}
 
+	// Default handlers
 	r.errorHandler = r.defaultErrorHandler
 	r.noRoute = r.defaultNoRoute
 	r.noMethod = r.defaultNoMethod
 
+	// Route name registry
+	r.routeNames = make(map[string]string)
+	r.tree = router.NewTree()
+
+	// HTTP server
 	r.server = &http.Server{
 		Addr:              addr,
 		ReadTimeout:       readTimeout,
@@ -176,7 +257,34 @@ func New(cfg Config) (*Router, error) {
 		logger.LogInfo("CSRF protection disabled")
 	}
 
-	r.tree = router.NewTree(nil)
+	// Health check endpoint
+	if cfg.HealthCheck.Enabled {
+		hcPath := cfg.HealthCheck.Path
+		if hcPath == "" {
+			hcPath = "/health"
+		}
+		r.healthCheckPath = hcPath
+		r.Get(hcPath, func(c *Resources) error {
+			return c.JSON(http.StatusOK, map[string]any{
+				"status": "ok",
+			})
+		})
+		logger.LogInfo("Health check endpoint registered at %s", hcPath)
+	}
+
+	// Log feature status
+	if r.csp != "" {
+		logger.LogInfo("CSP header enabled")
+	}
+	if cfg.CORS.Enabled {
+		logger.LogInfo("CORS enabled")
+	}
+	if r.compressionEnabled {
+		logger.LogInfo("Compression enabled (gzip level %d)", r.compressionLevel)
+	}
+	if len(r.wafExemptPaths) > 0 {
+		logger.LogInfo("WAF exempt paths: %v", r.wafExemptPaths)
+	}
 
 	return r, nil
 }

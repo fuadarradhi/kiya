@@ -47,3 +47,10 @@ func (e *HTTPError) Error() string {
 func (e *HTTPError) Unwrap() error {
 	return e.Err
 }
+
+// RouteInfo holds information about a registered route.
+type RouteInfo struct {
+	Method string
+	Path   string
+	Name   string
+}

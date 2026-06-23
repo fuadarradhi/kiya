@@ -8,7 +8,13 @@ import (
 
 // InitLogger menginisialisasi logger internal.
 func InitLogger(debug bool, token, group string) {
-	logger.Init(debug, token, group)
+	logger.Init(logger.Config{
+		Debug:   debug,
+		Token:   token,
+		Group:   group,
+		LogPath: "./temp/log",
+		WAFPath: "./temp/waf",
+	})
 }
 
 // CloseLogger menutup semua resource logger.

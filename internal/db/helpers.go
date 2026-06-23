@@ -12,6 +12,14 @@ type PrimaryKeyInfo struct {
 	IsZero     bool
 }
 
+// Pagination holds pagination metadata returned by Paginate().
+type Pagination struct {
+	Total    int64
+	Page     int
+	PerPage  int
+	LastPage int
+}
+
 // GetTableNameFromModel extracts the table name from a model struct or slice.
 func GetTableNameFromModel(model any) (string, error) {
 	return getTableNameFromModel(model)

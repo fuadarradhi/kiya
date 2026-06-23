@@ -48,6 +48,10 @@ type Builder struct {
 	inserts map[string]any
 	updates map[string]any
 
+	insertBatchCols         []string
+	insertBatchPlaceholders []string
+	insertBatchArgs         []any
+
 	nullableCols map[string]bool
 
 	onDuplicateUpdateCols []string
@@ -67,7 +71,8 @@ type Builder struct {
 	res              any
 	defaultCondition DefaultConditionFunc
 
-	softDeleteCondition string
+	softDeleteCondition  string
+	skipDefaultCondition bool
 }
 
 func (b *Builder) Bind(dest any) *Builder {
@@ -87,6 +92,11 @@ func (b *Builder) WithContext(ctx context.Context) *Builder {
 
 func (b *Builder) Use(tx Tx) *Builder {
 	b.executor = tx
+	return b
+}
+
+func (b *Builder) WithoutDefaultCondition() *Builder {
+	b.skipDefaultCondition = true
 	return b
 }
 
@@ -304,6 +314,18 @@ func (b *Builder) clone() *Builder {
 			newB.namedArgs[k] = v
 		}
 	}
+	if b.insertBatchCols != nil {
+		newB.insertBatchCols = make([]string, len(b.insertBatchCols))
+		copy(newB.insertBatchCols, b.insertBatchCols)
+	}
+	if b.insertBatchPlaceholders != nil {
+		newB.insertBatchPlaceholders = make([]string, len(b.insertBatchPlaceholders))
+		copy(newB.insertBatchPlaceholders, b.insertBatchPlaceholders)
+	}
+	if b.insertBatchArgs != nil {
+		newB.insertBatchArgs = make([]any, len(b.insertBatchArgs))
+		copy(newB.insertBatchArgs, b.insertBatchArgs)
+	}
 
 	if b.dest != nil {
 		newB.dest = b.dest
@@ -313,11 +335,7 @@ func (b *Builder) clone() *Builder {
 }
 
 func (b *Builder) applyDefaultCondition() {
-	if len(b.wheres) > 0 {
-		return
-	}
-
-	if b.defaultCondition == nil || b.res == nil {
+	if b.defaultCondition == nil || b.res == nil || b.skipDefaultCondition {
 		return
 	}
 
@@ -346,17 +364,67 @@ func (b *Builder) applyDefaultCondition() {
 	}
 
 	conds := b.defaultCondition(fields, b.res)
-	if len(conds) > 0 {
-		keys := make([]string, 0, len(conds))
-		for k := range conds {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
+	if len(conds) == 0 {
+		return
+	}
 
-		for _, k := range keys {
-			v := conds[k]
-			b.WhereEq(k, v)
+	keys := make([]string, 0, len(conds))
+	for k := range conds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var groupExpr strings.Builder
+	var groupArgs []any
+	first := true
+
+	for _, k := range keys {
+		safeCol := SanitizeIdentifier(k)
+		if safeCol == "" {
+			continue
 		}
+		if !first {
+			groupExpr.WriteString(" AND ")
+		}
+		groupExpr.WriteString(fmt.Sprintf("%s = ?", safeCol))
+		groupArgs = append(groupArgs, conds[k])
+		first = false
+	}
+
+	if groupExpr.Len() == 0 {
+		return
+	}
+
+	// Wrap existing wheres in parentheses to ensure correct SQL precedence
+	// e.g., WHERE (custom_where) AND (default_condition)
+	if len(b.wheres) > 0 {
+		var existingExpr strings.Builder
+		var existingArgs []any
+		for i, w := range b.wheres {
+			if i > 0 {
+				existingExpr.WriteString(" " + w.boolean + " ")
+			}
+			existingExpr.WriteString(w.expr)
+			existingArgs = append(existingArgs, w.args...)
+		}
+		b.wheres = []whereClause{
+			{
+				boolean: "AND",
+				expr:    "(" + existingExpr.String() + ")",
+				args:    existingArgs,
+			},
+			{
+				boolean: "AND",
+				expr:    "(" + groupExpr.String() + ")",
+				args:    groupArgs,
+			},
+		}
+	} else {
+		b.wheres = append(b.wheres, whereClause{
+			boolean: "AND",
+			expr:    "(" + groupExpr.String() + ")",
+			args:    groupArgs,
+		})
 	}
 }
 
@@ -494,6 +562,87 @@ func (b *Builder) Insert(data ...any) (Result, error) {
 		}
 	}
 
+	return res, err
+}
+
+// InsertBatch inserts multiple records in a single SQL query.
+func (b *Builder) InsertBatch(data []any) (Result, error) {
+	if len(data) == 0 {
+		return nil, errors.New("insert batch data cannot be empty")
+	}
+
+	first := data[0]
+	tableName, err := getTableNameFromModel(first)
+	if err != nil {
+		return nil, err
+	}
+
+	var selectedCols []string
+	if len(b.selects) > 0 {
+		for _, s := range b.selects {
+			selectedCols = append(selectedCols, s.expr)
+		}
+	}
+
+	mapDataList := make([]map[string]any, 0, len(data))
+	for _, item := range data {
+		m, err := structToMap(item, selectedCols, b.nullableCols)
+		if err != nil {
+			return nil, err
+		}
+		if len(m) > 0 {
+			mapDataList = append(mapDataList, m)
+		}
+	}
+
+	if len(mapDataList) == 0 {
+		return nil, errors.New("insert batch data cannot be empty after processing")
+	}
+
+	// Determine columns from the first map
+	var cols []string
+	for k := range mapDataList[0] {
+		if SanitizeIdentifier(k) != "" {
+			cols = append(cols, k)
+		}
+	}
+	sort.Strings(cols)
+
+	var placeholders []string
+	var args []any
+
+	for _, m := range mapDataList {
+		rowPh := make([]string, len(cols))
+		for i, colName := range cols {
+			rowPh[i] = "?"
+			args = append(args, m[colName])
+		}
+		placeholders = append(placeholders, "("+strings.Join(rowPh, ", ")+")")
+	}
+
+	clone := b.clone()
+	clone.action = "insert_batch"
+	clone.table = SanitizeIdentifier(tableName)
+	clone.insertBatchCols = cols
+	clone.insertBatchPlaceholders = placeholders
+	clone.insertBatchArgs = args
+
+	// Get primary keys for upsert support
+	v := reflect.ValueOf(first)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() == reflect.Struct {
+		info, err := getStructInfo(v.Type())
+		if err == nil {
+			if len(info.primaryKeys) > 0 {
+				clone.primaryKeys = info.primaryKeys
+			}
+		}
+	}
+
+	query, qArgs := clone.Build()
+	res, err := clone.executor.Exec(clone.ctx, query, qArgs...)
 	return res, err
 }
 
@@ -826,6 +975,44 @@ func (b *Builder) Exist() (bool, error) {
 	return true, nil
 }
 
+// Paginate executes a paginated query and returns pagination metadata.
+func (b *Builder) Paginate(dest any, page, perPage int) (*Pagination, error) {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 10
+	}
+
+	total, err := b.Count()
+	if err != nil {
+		return nil, err
+	}
+
+	lastPage := 0
+	if perPage > 0 {
+		lastPage = int((total + int64(perPage) - 1) / int64(perPage))
+	}
+
+	p := &Pagination{
+		Total:    total,
+		Page:     page,
+		PerPage:  perPage,
+		LastPage: lastPage,
+	}
+
+	if total == 0 {
+		return p, nil
+	}
+
+	err = b.Limit(perPage).Offset((page - 1) * perPage).FindAll(dest)
+	if err != nil {
+		return nil, err
+	}
+
+	return p, nil
+}
+
 func (b *Builder) Exec() (Result, error) {
 	clone := b.clone()
 	query, args := clone.Build()
@@ -872,6 +1059,8 @@ func (b *Builder) buildRaw() (string, []any) {
 	switch b.action {
 	case "insert":
 		b.buildInsert(&sql)
+	case "insert_batch":
+		b.buildInsertBatch(&sql)
 	case "update":
 		b.buildUpdate(&sql)
 	case "delete":
@@ -1009,6 +1198,53 @@ func (b *Builder) buildInsert(sql *strings.Builder) {
 	}
 }
 
+func (b *Builder) buildInsertBatch(sql *strings.Builder) {
+	if len(b.insertBatchCols) == 0 || len(b.insertBatchPlaceholders) == 0 {
+		logger.LogError("[DB] Build insert batch with no valid columns or placeholders")
+		return
+	}
+
+	sql.WriteString(fmt.Sprintf("INSERT INTO %s (%s) VALUES %s",
+		b.table,
+		strings.Join(b.insertBatchCols, ", "),
+		strings.Join(b.insertBatchPlaceholders, ", "),
+	))
+
+	b.args = append(b.args, b.insertBatchArgs...)
+
+	if len(b.onDuplicateUpdateCols) > 0 {
+		if b.dialect.Name() == "mysql" {
+			var updates []string
+			for _, col := range b.onDuplicateUpdateCols {
+				safeCol := SanitizeIdentifier(col)
+				if safeCol != "" {
+					updates = append(updates, fmt.Sprintf("%s = VALUES(%s)", safeCol, safeCol))
+				}
+			}
+			if len(updates) > 0 {
+				sql.WriteString(" ON DUPLICATE KEY UPDATE ")
+				sql.WriteString(strings.Join(updates, ", "))
+			}
+		} else if b.dialect.Name() == "postgres" {
+			var updates []string
+			for _, col := range b.onDuplicateUpdateCols {
+				safeCol := SanitizeIdentifier(col)
+				if safeCol != "" {
+					updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", safeCol, safeCol))
+				}
+			}
+			if len(updates) > 0 {
+				conflictCols := "id"
+				if len(b.primaryKeys) > 0 {
+					conflictCols = strings.Join(b.primaryKeys, ", ")
+				}
+				sql.WriteString(fmt.Sprintf(" ON CONFLICT (%s) DO UPDATE SET ", conflictCols))
+				sql.WriteString(strings.Join(updates, ", "))
+			}
+		}
+	}
+}
+
 func (b *Builder) buildUpdate(sql *strings.Builder) {
 	var sets []string
 
@@ -1053,15 +1289,15 @@ func (b *Builder) buildWheres(sql *strings.Builder) {
 		sql.WriteString(b.softDeleteCondition)
 
 		if len(b.wheres) > 0 {
-			hasOr := false
+			hasOR := false
 			for _, w := range b.wheres {
 				if w.boolean == "OR" {
-					hasOr = true
+					hasOR = true
 					break
 				}
 			}
 
-			if hasOr {
+			if hasOR {
 				sql.WriteString(" AND (")
 				for i, w := range b.wheres {
 					if i > 0 {
