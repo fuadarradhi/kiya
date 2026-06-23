@@ -1,4 +1,4 @@
-package http
+package web
 
 import (
 	"crypto/aes"
@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -164,34 +163,13 @@ func VerifyCSRFToken(token string, session *security.Session, encryptKey []byte)
 	return true
 }
 
-// ExtractIP extracts the real IP address from the request.
+// ExtractIP extracts the real client IP, honoring the framework-wide
+// TrustProxyHeaders policy via util.RealIP.
 func ExtractIP(req *http.Request) string {
 	if req == nil {
 		return ""
 	}
-
-	remoteIP, _, err := net.SplitHostPort(req.RemoteAddr)
-	if err != nil {
-		remoteIP = req.RemoteAddr
-	}
-
-	if util.IsPrivateIP(remoteIP) {
-		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
-			parts := strings.Split(xff, ",")
-			for i := len(parts) - 1; i >= 0; i-- {
-				ip := strings.TrimSpace(parts[i])
-				if ip != "" {
-					return ip
-				}
-			}
-		}
-
-		if xri := req.Header.Get("X-Real-IP"); xri != "" {
-			return strings.TrimSpace(xri)
-		}
-	}
-
-	return remoteIP
+	return util.RealIP(req)
 }
 
 // InjectCSRFIntoForms injects a hidden input into HTML forms.

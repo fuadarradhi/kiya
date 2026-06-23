@@ -21,13 +21,12 @@ const RequestIDKey ctxKey = "request_id"
 
 // QueryLog holds information about an executed query.
 type QueryLog struct {
-	Query     string
-	FullQuery string
-	Args      []any
-	Duration  time.Duration
-	Err       error
-	Rows      int64
-	Context   map[string]any
+	Query    string
+	Args     []any
+	Duration time.Duration
+	Err      error
+	Rows     int64
+	Context  map[string]any
 }
 
 // QueryLogger interface for custom query loggers.
@@ -37,16 +36,14 @@ type QueryLogger interface {
 
 type frameworkLogger struct{}
 
+// Log emits the placeholder query only. Argument values are never written to
+// the framework log to avoid leaking credentials or PII into log files.
+// Use Builder.DebugSQL() on demand if an interpolated query is needed.
 func (l *frameworkLogger) Log(q QueryLog) {
-	displayQuery := q.FullQuery
-	if displayQuery == "" {
-		displayQuery = q.Query
-	}
-
 	if q.Err != nil {
-		logger.LogError("[DB] %s | Args: %v | Error: %v | Duration: %s", q.Query, q.Args, q.Err, q.Duration)
+		logger.LogError("[DB] %s | Error: %v | Duration: %s", q.Query, q.Err, q.Duration)
 	} else {
-		logger.LogInfo("[DB] %s | Rows: %d | Duration: %s", displayQuery, q.Rows, q.Duration)
+		logger.LogInfo("[DB] %s | Rows: %d | Duration: %s", q.Query, q.Rows, q.Duration)
 	}
 }
 
@@ -65,12 +62,11 @@ func (t *loggedTx) Select(ctx context.Context, dest any, query string, args ...a
 	err := t.inner.Select(ctx, dest, query, args...)
 	if t.logger != nil {
 		t.logger.Log(QueryLog{
-			Query:     query,
-			FullQuery: interpolateQuery(query, args),
-			Args:      args,
-			Duration:  time.Since(start),
-			Err:       err,
-			Context:   ctxToMap(ctx),
+			Query:    query,
+			Args:     args,
+			Duration: time.Since(start),
+			Err:      err,
+			Context:  ctxToMap(ctx),
 		})
 	}
 	return err
@@ -85,12 +81,11 @@ func (t *loggedTx) Get(ctx context.Context, dest any, query string, args ...any)
 			logErr = nil
 		}
 		t.logger.Log(QueryLog{
-			Query:     query,
-			FullQuery: interpolateQuery(query, args),
-			Args:      args,
-			Duration:  time.Since(start),
-			Err:       logErr,
-			Context:   ctxToMap(ctx),
+			Query:    query,
+			Args:     args,
+			Duration: time.Since(start),
+			Err:      logErr,
+			Context:  ctxToMap(ctx),
 		})
 	}
 	return err
@@ -105,13 +100,12 @@ func (t *loggedTx) Exec(ctx context.Context, query string, args ...any) (Result,
 	}
 	if t.logger != nil {
 		t.logger.Log(QueryLog{
-			Query:     query,
-			FullQuery: interpolateQuery(query, args),
-			Args:      args,
-			Duration:  time.Since(start),
-			Err:       err,
-			Rows:      rows,
-			Context:   ctxToMap(ctx),
+			Query:    query,
+			Args:     args,
+			Duration: time.Since(start),
+			Err:      err,
+			Rows:     rows,
+			Context:  ctxToMap(ctx),
 		})
 	}
 	return res, err
@@ -135,6 +129,8 @@ func NewLoggedExecutor(inner Executor, log QueryLogger) *LoggedExecutor {
 	return &LoggedExecutor{inner: inner, logger: log}
 }
 
+// interpolateQuery substitutes placeholders with argument values. It is only
+// used by Builder.DebugSQL() for manual debugging, never on the logging path.
 func interpolateQuery(query string, args []any) string {
 	if len(args) == 0 {
 		return query
@@ -174,12 +170,11 @@ func (e *LoggedExecutor) Select(ctx context.Context, dest any, query string, arg
 	err := e.inner.Select(ctx, dest, query, args...)
 	if e.logger != nil {
 		e.logger.Log(QueryLog{
-			Query:     query,
-			FullQuery: interpolateQuery(query, args),
-			Args:      args,
-			Duration:  time.Since(start),
-			Err:       err,
-			Context:   ctxToMap(ctx),
+			Query:    query,
+			Args:     args,
+			Duration: time.Since(start),
+			Err:      err,
+			Context:  ctxToMap(ctx),
 		})
 	}
 	return err
@@ -195,12 +190,11 @@ func (e *LoggedExecutor) Get(ctx context.Context, dest any, query string, args .
 			logErr = nil
 		}
 		e.logger.Log(QueryLog{
-			Query:     query,
-			FullQuery: interpolateQuery(query, args),
-			Args:      args,
-			Duration:  time.Since(start),
-			Err:       logErr,
-			Context:   ctxToMap(ctx),
+			Query:    query,
+			Args:     args,
+			Duration: time.Since(start),
+			Err:      logErr,
+			Context:  ctxToMap(ctx),
 		})
 	}
 	return err
@@ -215,13 +209,12 @@ func (e *LoggedExecutor) Exec(ctx context.Context, query string, args ...any) (R
 	}
 	if e.logger != nil {
 		e.logger.Log(QueryLog{
-			Query:     query,
-			FullQuery: interpolateQuery(query, args),
-			Args:      args,
-			Duration:  time.Since(start),
-			Err:       err,
-			Rows:      rows,
-			Context:   ctxToMap(ctx),
+			Query:    query,
+			Args:     args,
+			Duration: time.Since(start),
+			Err:      err,
+			Rows:     rows,
+			Context:  ctxToMap(ctx),
 		})
 	}
 	return res, err

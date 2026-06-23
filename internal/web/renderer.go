@@ -1,11 +1,7 @@
-package http
+package web
 
 import (
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,7 +86,7 @@ func filterRequery(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo
 	if err != nil {
 		return nil, &pongo2.Error{
 			Sender:    "filter:requery",
-			OrigError: fmt.Errorf("Invalid target URL: %v", err),
+			OrigError: fmt.Errorf("invalid target URL: %v", err),
 		}
 	}
 
@@ -129,34 +125,18 @@ func filterEncrypt(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo
 		}
 	}
 
-	plaintext := []byte(in.String())
-
-	block, err := aes.NewCipher(encKey)
+	// Use the shared Encrypt helper so template output matches Decrypt
+	// (AES-256-GCM, base64url). Previously this emitted hex and could not
+	// be decrypted on the next request.
+	encoded, err := Encrypt([]byte(in.String()), encKey)
 	if err != nil {
 		return nil, &pongo2.Error{
 			Sender:    "filter:encrypt",
-			OrigError: fmt.Errorf("create cipher: %v", err),
+			OrigError: err,
 		}
 	}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, &pongo2.Error{
-			Sender:    "filter:encrypt",
-			OrigError: fmt.Errorf("create GCM: %v", err),
-		}
-	}
-
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, &pongo2.Error{
-			Sender:    "filter:encrypt",
-			OrigError: fmt.Errorf("generate nonce: %v", err),
-		}
-	}
-
-	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-	return pongo2.AsValue(hex.EncodeToString(ciphertext)), nil
+	return pongo2.AsValue(encoded), nil
 }
 
 func filterJSONEncode(in *pongo2.Value, param *pongo2.Value) (*pongo2.Value, *pongo2.Error) {

@@ -12,7 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
+
+	"github.com/fuadarradhi/kiya/internal/util"
 )
 
 // RulesFunc defines the validation function signature.
@@ -132,7 +133,7 @@ func (v *Validator) Bind(form any, bind ...bool) *Validator {
 		}
 
 		if v.uniqueTable == "" {
-			v.uniqueTable = toSnakeCaseLocal(val.Type().Name())
+			v.uniqueTable = util.ToSnakeCase(val.Type().Name())
 		}
 	}
 
@@ -381,7 +382,7 @@ func (v *Validator) Error(field string, err string) *Validator {
 }
 
 func (v *Validator) Errors() error {
-	return v.res.Json(http.StatusUnprocessableEntity,
+	return v.res.APIResponse(http.StatusUnprocessableEntity,
 		"terdapat kesalahan pada inputan Anda, silahkan periksa dan ulangi kembali",
 		v.validateErrors, []string{},
 	)
@@ -665,18 +666,4 @@ func isEmpty(value any) bool {
 	}
 
 	return false
-}
-
-func toSnakeCaseLocal(in string) string {
-	runes := []rune(in)
-	length := len(runes)
-
-	var out []rune
-	for i := 0; i < length; i++ {
-		if i > 0 && (unicode.IsUpper(runes[i])) && ((i+1 < length && unicode.IsLower(runes[i+1])) || unicode.IsLower(runes[i-1])) {
-			out = append(out, '_')
-		}
-		out = append(out, unicode.ToLower(runes[i]))
-	}
-	return string(out)
 }

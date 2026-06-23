@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	khttp "github.com/fuadarradhi/kiya/internal/http"
 	"github.com/fuadarradhi/kiya/internal/router"
+	"github.com/fuadarradhi/kiya/internal/web"
 )
 
 // Map is a shortcut for map[string]any
@@ -39,7 +39,7 @@ type Resources struct {
 	database    *DB
 	params      []router.Param
 	globals     *Globals
-	renderer    *khttp.Renderer
+	renderer    *web.Renderer
 	written     bool
 	aborted     bool
 	body        []byte
@@ -54,7 +54,7 @@ func (r *Resources) Session() *Session             { return r.session }
 func (r *Resources) Database() *DB                 { return r.database }
 func (r *Resources) Globals() *Globals             { return r.globals }
 
-func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *khttp.Renderer) {
+func (r *Resources) reset(w http.ResponseWriter, req *http.Request, renderer *web.Renderer) {
 	r.response = w
 	r.request = req
 	r.session = nil
@@ -139,7 +139,8 @@ func (r *Resources) JSON(code int, obj any) error {
 	return json.NewEncoder(r.response).Encode(obj)
 }
 
-func (r *Resources) Json(code int, message string, errs map[string][]string, data any) error {
+// APIResponse writes the standard structured JSON envelope (JsonData).
+func (r *Resources) APIResponse(code int, message string, errs map[string][]string, data any) error {
 	if data == nil {
 		data = []string{}
 	}
@@ -168,7 +169,6 @@ func (r *Resources) Json(code int, message string, errs map[string][]string, dat
 }
 
 func (r *Resources) Render(code int, name string, data ...Map) error {
-	r.Status(code)
 	if r.renderer == nil {
 		return errors.New("renderer is not initialized")
 	}
@@ -190,7 +190,7 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 			jsonData = []string{}
 		}
 
-		return r.Json(code, message, map[string][]string{}, jsonData)
+		return r.APIResponse(code, message, map[string][]string{}, jsonData)
 	}
 
 	var ctx Map
@@ -210,12 +210,14 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 
 	var csrfToken string
 	if r.csrfEnabled && len(r.encryptKey) > 0 {
-		if token, err := khttp.GenerateCSRFToken(r.session, r.encryptKey); err == nil {
+		if token, err := web.GenerateCSRFToken(r.session, r.encryptKey); err == nil {
 			csrfToken = token
 			ctx["csrf_token"] = csrfToken
 		}
 	}
 
+	// Render to a buffer first so a template error does not leave a half-written
+	// response with the wrong status/headers.
 	var buf bytes.Buffer
 	if err := r.renderer.Render(&buf, name, ctx); err != nil {
 		return err
@@ -223,10 +225,12 @@ func (r *Resources) Render(code int, name string, data ...Map) error {
 
 	htmlStr := buf.String()
 	if csrfToken != "" {
-		htmlStr = khttp.InjectCSRFIntoForms(htmlStr, csrfToken)
-		htmlStr = khttp.InjectCSRFMeta(htmlStr, csrfToken)
+		htmlStr = web.InjectCSRFIntoForms(htmlStr, csrfToken)
+		htmlStr = web.InjectCSRFMeta(htmlStr, csrfToken)
 	}
 
+	r.response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	r.Status(code)
 	_, err := io.WriteString(r.response, htmlStr)
 	return err
 }
@@ -321,27 +325,27 @@ func (r *Resources) Param(key string) string {
 }
 
 func (r *Resources) Get(key string) string {
-	return khttp.Get(r.request, key)
+	return web.Get(r.request, key)
 }
 
 func (r *Resources) Post(key string) string {
-	return khttp.Post(r.request, key)
+	return web.Post(r.request, key)
 }
 
 func (r *Resources) GetPost(key string) string {
-	return khttp.GetPost(r.request, key)
+	return web.GetPost(r.request, key)
 }
 
 func (r *Resources) PostGet(key string) string {
-	return khttp.PostGet(r.request, key)
+	return web.PostGet(r.request, key)
 }
 
 func (r *Resources) IsAJAX() bool {
-	return khttp.IsAJAX(r.request)
+	return web.IsAJAX(r.request)
 }
 
 func (r *Resources) GetBody() ([]byte, error) {
-	b, err := khttp.GetBody(r.response, r.request, r.body)
+	b, err := web.GetBody(r.response, r.request, r.body)
 	if err != nil {
 		return nil, err
 	}
@@ -354,11 +358,11 @@ func (r *Resources) BindJSON(v any) error {
 	if err != nil {
 		return err
 	}
-	return khttp.BindJSON(body, v)
+	return web.BindJSON(body, v)
 }
 
 func (r *Resources) Bind(v any) error {
-	b, err := khttp.Bind(r.response, r.request, r.body, v)
+	b, err := web.Bind(r.response, r.request, r.body, v)
 	if err != nil {
 		return err
 	}
@@ -379,39 +383,39 @@ func (r *Resources) Validator(val any, bind ...bool) *Validator {
 }
 
 func (r *Resources) File(key string) (*multipart.FileHeader, error) {
-	return khttp.File(r.request, key)
+	return web.File(r.request, key)
 }
 
 func (r *Resources) SaveFile(key string, dst string) error {
-	return khttp.SaveFile(r.request, key, dst)
+	return web.SaveFile(r.request, key, dst)
 }
 
 func (r *Resources) Encrypt(plaintext []byte) (string, error) {
-	return khttp.Encrypt(plaintext, r.encryptKey)
+	return web.Encrypt(plaintext, r.encryptKey)
 }
 
 func (r *Resources) Decrypt(encoded string) ([]byte, error) {
-	return khttp.Decrypt(encoded, r.encryptKey)
+	return web.Decrypt(encoded, r.encryptKey)
 }
 
 func (r *Resources) EncryptString(plaintext string) (string, error) {
-	return khttp.EncryptString(plaintext, r.encryptKey)
+	return web.EncryptString(plaintext, r.encryptKey)
 }
 
 func (r *Resources) DecryptString(encoded string) (string, error) {
-	return khttp.DecryptString(encoded, r.encryptKey)
+	return web.DecryptString(encoded, r.encryptKey)
 }
 
 func (r *Resources) GenerateCSRFToken() (string, error) {
-	return khttp.GenerateCSRFToken(r.session, r.encryptKey)
+	return web.GenerateCSRFToken(r.session, r.encryptKey)
 }
 
 func (r *Resources) VerifyCSRFToken(token string) bool {
-	return khttp.VerifyCSRFToken(token, r.session, r.encryptKey)
+	return web.VerifyCSRFToken(token, r.session, r.encryptKey)
 }
 
 func (r *Resources) ExtractIP() string {
-	return khttp.ExtractIP(r.request)
+	return web.ExtractIP(r.request)
 }
 
 // isValidRedirectCode checks if the code is a valid 3xx redirect code.

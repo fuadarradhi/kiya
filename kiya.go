@@ -2,6 +2,7 @@ package kiya
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -9,15 +10,16 @@ import (
 
 	"github.com/gorilla/sessions"
 
-	khttp "github.com/fuadarradhi/kiya/internal/http"
 	"github.com/fuadarradhi/kiya/internal/logger"
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/security"
 	"github.com/fuadarradhi/kiya/internal/util"
+	"github.com/fuadarradhi/kiya/internal/web"
 )
 
 // New creates a new Router instance with the provided configuration.
-func New(cfg Config) *Router {
+// It returns an error instead of panicking so the caller controls fatal handling.
+func New(cfg Config) (*Router, error) {
 	host := cfg.Server.Host
 	if host == "" {
 		host = "0.0.0.0"
@@ -29,8 +31,7 @@ func New(cfg Config) *Router {
 
 	database, err := NewDatabase(cfg.Database)
 	if err != nil {
-		logger.LogError("CRITICAL: Failed to initialize Database: %v", err)
-		panic(err)
+		return nil, fmt.Errorf("initialize database: %w", err)
 	}
 
 	r := &Router{
@@ -38,7 +39,7 @@ func New(cfg Config) *Router {
 		database:   database,
 		debug:      cfg.Debug,
 		forceHTTPS: cfg.Server.ForceHTTPS,
-		renderer:   khttp.NewRenderer(cfg.View.FS),
+		renderer:   web.NewRenderer(cfg.View.FS),
 		sameSite:   http.SameSiteLaxMode,
 
 		csrfEnabled:     cfg.Server.CSRFEnabled,
@@ -53,13 +54,11 @@ func New(cfg Config) *Router {
 		logger.LogInfo("Encryption disabled (no key configured)")
 	}
 
-	var store *sessions.CookieStore
 	if cfg.Server.SessionEnabled {
 		if cfg.Server.SessionSecret == "" {
-			logger.LogError("CRITICAL: SESSION SECRET cannot be empty when SessionEnabled is true.")
-			panic("SESSION SECRET cannot be empty")
+			return nil, errors.New("session secret cannot be empty when sessions are enabled")
 		}
-		store = sessions.NewCookieStore([]byte(cfg.Server.SessionSecret))
+		store := sessions.NewCookieStore([]byte(cfg.Server.SessionSecret))
 
 		sessionMaxAge := cfg.Server.SessionMaxAge
 		if sessionMaxAge <= 0 {
@@ -177,8 +176,7 @@ func New(cfg Config) *Router {
 		logger.LogInfo("CSRF protection disabled")
 	}
 
-	// Initialize router tree
 	r.tree = router.NewTree(nil)
 
-	return r
+	return r, nil
 }

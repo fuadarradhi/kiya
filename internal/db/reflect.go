@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/fuadarradhi/kiya/internal/logger"
+	"github.com/fuadarradhi/kiya/internal/util"
 )
 
 type dbCachedField struct {
@@ -29,27 +29,13 @@ type dbCachedStruct struct {
 
 var dbStructCache sync.Map
 
-func toSnakeCase(in string) string {
-	runes := []rune(in)
-	length := len(runes)
-
-	var out []rune
-	for i := 0; i < length; i++ {
-		if i > 0 && unicode.IsUpper(runes[i]) && ((i+1 < length && unicode.IsLower(runes[i+1])) || unicode.IsLower(runes[i-1])) {
-			out = append(out, '_')
-		}
-		out = append(out, unicode.ToLower(runes[i]))
-	}
-	return string(out)
-}
-
 func getStructInfo(typ reflect.Type) (*dbCachedStruct, error) {
 	if cached, ok := dbStructCache.Load(typ); ok {
 		return cached.(*dbCachedStruct), nil
 	}
 
 	info := &dbCachedStruct{}
-	info.defaultName = toSnakeCase(typ.Name())
+	info.defaultName = util.ToSnakeCase(typ.Name())
 
 	ptrType := reflect.PointerTo(typ)
 	if method, exists := ptrType.MethodByName("TableName"); exists {

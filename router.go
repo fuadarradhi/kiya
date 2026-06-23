@@ -16,14 +16,13 @@ import (
 	"github.com/corazawaf/coraza/v3"
 	"github.com/gorilla/sessions"
 
-	khttp "github.com/fuadarradhi/kiya/internal/http"
 	"github.com/fuadarradhi/kiya/internal/logger"
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/security"
+	"github.com/fuadarradhi/kiya/internal/web"
 )
 
-// NOTE: HandlerFunc, Middleware, and GroupFunc are declared in handler.go.
-// NOTE: HTTPError is declared in errors.go.
+// NOTE: HandlerFunc, Middleware, GroupFunc, Session and HTTPError are declared in types.go.
 
 // Router is the main HTTP router and framework entrypoint.
 // All fields are unexported to prevent external modification.
@@ -43,7 +42,7 @@ type Router struct {
 	waf          coraza.WAF
 	database     *DB
 	sessionStore *sessions.CookieStore
-	renderer     *khttp.Renderer
+	renderer     *web.Renderer
 
 	rateLimiter      *security.Store
 	keyFunc          func(r *http.Request, sess *Session) string
@@ -92,8 +91,8 @@ func (r *Router) Use(m ...Middleware) {
 
 	// Update middleware on the existing tree (keeps already-registered routes).
 	internalMws := make([]router.Middleware, len(r.middleware))
-	for i, m := range r.middleware {
-		internalMws[i] = adapterMiddleware(m)
+	for i, mw := range r.middleware {
+		internalMws[i] = adapterMiddleware(mw)
 	}
 	r.tree.SetMiddleware(internalMws)
 }
@@ -236,7 +235,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	}()
 
 	if r.database != nil {
-		// We assign to internal field using a trick since Resources is opaque in same package
 		res.database = r.database.WithContext(req.Context())
 	}
 
@@ -305,8 +303,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 		res.params = params
-		// We need to call the internal handler which expects `any`
-		// So we wrap it back to a kiya.HandlerFunc
 		finalHandler = func(r2 *Resources) error {
 			return handler(r2)
 		}
@@ -400,7 +396,7 @@ func (r *Router) handleError(c *Resources, err error) {
 
 func (r *Router) defaultErrorHandler(c *Resources, code int, msg string, err error) {
 	if c.IsAJAX() {
-		c.Json(code, msg, map[string][]string{}, []string{})
+		c.APIResponse(code, msg, map[string][]string{}, []string{})
 		return
 	}
 	c.String(code, fmt.Sprintf("%d %s\n\n%s", code, http.StatusText(code), msg))
