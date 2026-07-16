@@ -9,19 +9,6 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
-// preparedCache holds prepared statements keyed by their exact query text.
-// This only pays off for queries whose text is stable across calls
-// (Find-by-PK, Insert, Update-by-PK all generate the same string shape
-// every time for a given table/columns) — ad-hoc Where() strings won't
-// benefit much since each distinct string gets its own cache entry, but
-// they're not harmful either (just a cache miss + one extra Prepare).
-//
-// Eviction is intentionally simple (drop one arbitrary entry once the cap
-// is hit) rather than true LRU — the workload this targets is a small,
-// stable set of hot queries per table, not an unbounded ad-hoc query mix.
-// If that assumption stops holding for your app, raise the cap or turn
-// this off; don't reach for a fancier eviction policy before you have
-// evidence you need it.
 type preparedCache struct {
 	mu    sync.RWMutex
 	db    *sqlx.DB
@@ -51,7 +38,6 @@ func (c *preparedCache) get(ctx context.Context, query string) (*sqlx.Stmt, erro
 
 	c.mu.Lock()
 	if existing, ok := c.stmts[query]; ok {
-		// another goroutine won the race to prepare this same query first.
 		c.mu.Unlock()
 		stmt.Close()
 		return existing, nil
@@ -79,10 +65,6 @@ func (c *preparedCache) Close() error {
 	return nil
 }
 
-// preparedExecutor implements Executor, backed by preparedCache. Its
-// Select/Get logic intentionally mirrors sqlxExecutor's row-scanning
-// (executor.go) line for line — same MapScan + scanMapToStruct path — so
-// switching this on changes performance, not behavior.
 type preparedExecutor struct {
 	inner *sqlxExecutor
 	cache *preparedCache
@@ -98,9 +80,6 @@ func newPreparedExecutor(sqlxDB *sqlx.DB, maxStmts int) *preparedExecutor {
 func (e *preparedExecutor) Select(ctx context.Context, dest any, query string, args ...any) error {
 	stmt, err := e.cache.get(ctx, query)
 	if err != nil {
-		// fall back to the uncached path rather than failing the request
-		// outright — a Prepare error (e.g. transient connection issue)
-		// shouldn't be worse than just not caching.
 		return e.inner.Select(ctx, dest, query, args...)
 	}
 
@@ -181,9 +160,5 @@ func (e *preparedExecutor) Exec(ctx context.Context, query string, args ...any) 
 }
 
 func (e *preparedExecutor) Begin(ctx context.Context) (Tx, error) {
-	// transactions get the plain (uncached) executor path — a *sqlx.Stmt
-	// prepared against the pool isn't usable inside a *sqlx.Tx directly,
-	// and the win from caching is much smaller for the request-scoped
-	// queries typically run inside a single transaction anyway.
 	return e.inner.Begin(ctx)
 }

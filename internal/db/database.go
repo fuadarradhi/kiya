@@ -11,9 +11,6 @@ import (
 
 type ScopeFunc func(fields []string, res any) map[string]any
 
-// Option configures optional behavior for NewDatabase. All options are
-// additive and opt-in — calling NewDatabase with zero options behaves
-// exactly as before this patch.
 type Option func(*dbOptions)
 
 type dbOptions struct {
@@ -22,10 +19,6 @@ type dbOptions struct {
 	preparedCacheSize  int
 }
 
-// WithQueryLogger registers an additional QueryLogger that runs alongside
-// the default file/Telegram logger (it does not replace it). This is the
-// hook for #4 (observability): build one via db.NewMetricsQueryLogger(sink)
-// to feed a MetricsSink, or pass any other QueryLogger implementation.
 func WithQueryLogger(l QueryLogger) Option {
 	return func(o *dbOptions) {
 		if l != nil {
@@ -34,10 +27,6 @@ func WithQueryLogger(l QueryLogger) Option {
 	}
 }
 
-// WithPreparedStatements turns on the prepared-statement cache for plain
-// (non-transaction) queries. cacheSize <= 0 defaults to 200 entries. This
-// is opt-in and off by default — see internal/db/prepared.go for what it
-// does and does not help with.
 func WithPreparedStatements(cacheSize int) Option {
 	return func(o *dbOptions) {
 		o.preparedStatements = true
@@ -53,7 +42,7 @@ type DB struct {
 	ctx       context.Context
 	scope     ScopeFunc
 
-	preparedCache *preparedCache // non-nil only if WithPreparedStatements was used; closed on DB.Close()
+	preparedCache *preparedCache
 }
 
 func NewDatabase(sqlxDB *sqlx.DB, dialect Dialect, closeFunc func() error, scope ScopeFunc, opts ...Option) *DB {

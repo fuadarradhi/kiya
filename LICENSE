@@ -1,0 +1,39 @@
+Kiya Framework License
+
+Copyright (c) 2026 Fuad Ar-Radhi <fuad.arradhi@gmail.com>
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the
+"Software"), to use, copy, and distribute the Software, for any purpose,
+including commercial use, subject to the following conditions:
+
+1. NO MODIFICATION. The Software, or any substantial portion of it, may
+   only be used, copied, or distributed in its original, unmodified
+   form. Creating derivative works, modified versions, or works based on
+   the Software is not permitted without prior written permission from
+   the copyright holder.
+
+2. MANDATORY ATTRIBUTION. Any copy or distribution of the Software, in
+   whole or in part, must retain this license text and must clearly
+   credit the original author:
+
+       Fuad Ar-Radhi <fuad.arradhi@gmail.com>
+
+   Attribution must be reasonably visible to end users or developers of
+   any project that incorporates the Software (for example, in a NOTICE
+   file, an "About" or credits page, or equivalent project
+   documentation).
+
+3. NO WARRANTY. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+   ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+   WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+   NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY
+   CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN
+   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+4. TERMINATION. Any use that violates condition 1 or 2 above
+   automatically terminates the permissions granted by this license.
+
+For permission to modify, sublicense under different terms, or other
+uses not covered above, contact fuad.arradhi@gmail.com.

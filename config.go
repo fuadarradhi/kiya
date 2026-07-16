@@ -12,9 +12,14 @@ const (
 	SessionStoreRedis  = "redis"
 )
 
+const (
+	RateLimiterBackendMemory = "memory"
+	RateLimiterBackendRedis  = "redis"
+)
+
 type ScopeFunc func(fields []string, c *Context) map[string]any
 
-type Config struct {
+type config struct {
 	Debug             bool
 	Telegram          TelegramConfig
 	Server            ServerConfig
@@ -29,14 +34,15 @@ type Config struct {
 	CORS              CORSConfig
 	Compression       CompressionConfig
 	HealthCheck       HealthCheckConfig
+	Metrics           MetricsConfig
 
 	CurrentUserFunc func(*Context) (id any, name string)
 }
 
-func (c Config) Validate() error {
+func (c config) validate() error {
 	if c.Server.SessionEnabled {
 		if c.Server.SessionSecret == "" {
-			return errors.New("session secret cannot be empty when sessions are enabled")
+			return errors.New("session secret cannot be empty when sessions are enabled — use kiya.WithSession(...) or kiya.WithSessionRedis(...)")
 		}
 		if c.Server.SessionStore.Type == SessionStoreRedis {
 			if c.Server.SessionStore.Redis.Addr == "" {
@@ -50,6 +56,11 @@ func (c Config) Validate() error {
 		}
 		if c.Database.Host == "" || c.Database.Port == "" || c.Database.Name == "" || c.Database.User == "" {
 			return errors.New("database host, port, name, and user are required when database is enabled")
+		}
+	}
+	if c.RateLimiter.Enabled && c.RateLimiter.Backend == RateLimiterBackendRedis {
+		if c.RateLimiter.Redis.Addr == "" {
+			return errors.New("rate limiter redis address cannot be empty when RateLimiter.Backend is \"redis\"")
 		}
 	}
 	return nil
@@ -113,10 +124,12 @@ type ViewConfig struct {
 
 type RateLimiterConfig struct {
 	Enabled         bool
+	Backend         string
 	Rate            float64
 	Burst           int
 	TTL             time.Duration
 	CleanupInterval time.Duration
+	Redis           RedisConfig
 	KeyFunc         func(r *http.Request, sess *Session) string
 }
 
@@ -152,6 +165,11 @@ type CompressionConfig struct {
 }
 
 type HealthCheckConfig struct {
+	Enabled bool
+	Path    string
+}
+
+type MetricsConfig struct {
 	Enabled bool
 	Path    string
 }

@@ -9,14 +9,9 @@ import (
 	"strings"
 )
 
-// LocalDisk stores files on the local filesystem under Root. Same path
-// safety rules as the existing internal/web.SaveFile (no absolute paths,
-// no "..", no null bytes) — a cloud Disk implementation won't need these
-// checks (the cloud SDK handles its own key namespacing), but a local one
-// must, since Root is a real filesystem directory.
 type LocalDisk struct {
 	Root    string
-	BaseURL string // e.g. "/files" if you serve Root via Router.StaticFS
+	BaseURL string
 }
 
 func NewLocalDisk(root, baseURL string) *LocalDisk {

@@ -11,14 +11,22 @@ import (
 	"github.com/gorilla/sessions"
 
 	"github.com/fuadarradhi/kiya/internal/logger"
+	"github.com/fuadarradhi/kiya/internal/metrics"
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/security"
 	"github.com/fuadarradhi/kiya/internal/util"
 	"github.com/fuadarradhi/kiya/internal/web"
 )
 
-func New(cfg Config) (*Router, error) {
-	if err := cfg.Validate(); err != nil {
+func New(opts ...Option) (*Router, error) {
+	cfg := config{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&cfg)
+		}
+	}
+
+	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
 
@@ -192,13 +200,33 @@ func New(cfg Config) (*Router, error) {
 		if burst <= 0 {
 			burst = 20
 		}
-		ttl := cfg.RateLimiter.TTL
-		if ttl <= 0 {
-			ttl = 5 * time.Minute
-		}
-		cleanupInterval := cfg.RateLimiter.CleanupInterval
 
-		r.rateLimiter = security.NewStore(rate, burst, ttl, cleanupInterval)
+		switch cfg.RateLimiter.Backend {
+		case RateLimiterBackendRedis:
+			store, err := security.NewRedisRateLimitStore(
+				cfg.RateLimiter.Redis.Addr,
+				cfg.RateLimiter.Redis.Password,
+				cfg.RateLimiter.Redis.DB,
+				rate, burst,
+			)
+			if err != nil {
+				return nil, fmt.Errorf("create redis rate limiter: %w", err)
+			}
+			r.rateLimiter = store
+			logger.LogInfo("Rate limiter enabled (Redis store, shared across instances) | Addr: %s",
+				cfg.RateLimiter.Redis.Addr)
+
+		default:
+			ttl := cfg.RateLimiter.TTL
+			if ttl <= 0 {
+				ttl = 5 * time.Minute
+			}
+			cleanupInterval := cfg.RateLimiter.CleanupInterval
+
+			r.rateLimiter = security.NewStore(rate, burst, ttl, cleanupInterval)
+			logger.LogInfo("Rate limiter enabled (in-memory store, per-instance only — " +
+				"set RateLimiter.Backend to \"redis\" if running more than one instance)")
+		}
 
 		if cfg.RateLimiter.KeyFunc != nil {
 			r.keyFunc = func(req *http.Request, sess *Session) string {
@@ -275,6 +303,19 @@ func New(cfg Config) (*Router, error) {
 			})
 		})
 		logger.LogInfo("Health check endpoint registered at %s", hcPath)
+	}
+
+	if cfg.Metrics.Enabled {
+		metricsPath := cfg.Metrics.Path
+		if metricsPath == "" {
+			metricsPath = "/metrics"
+		}
+		r.metrics = metrics.New()
+		r.Get(metricsPath, func(c *Context) error {
+			r.metrics.Handler()(c.Response(), c.Request())
+			return nil
+		})
+		logger.LogInfo("Metrics endpoint registered at %s (Prometheus text format)", metricsPath)
 	}
 
 	if r.csp != "" {

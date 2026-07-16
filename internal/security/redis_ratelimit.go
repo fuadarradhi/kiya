@@ -10,14 +10,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
-// tokenBucketScript implements the same token-bucket algorithm as the
-// in-memory Store (ratelimit.go), but atomically inside Redis so multiple
-// app instances share one limit instead of each enforcing its own.
-//
-// KEYS[1] = bucket key
-// ARGV[1] = rate (tokens refilled per second)
-// ARGV[2] = burst (max tokens / bucket capacity)
-// ARGV[3] = now (unix time, seconds, as a float)
 var tokenBucketScript = redis.NewScript(`
 local tokens_key = KEYS[1] .. ":tokens"
 local ts_key = KEYS[1] .. ":ts"
@@ -59,8 +51,6 @@ redis.call("SETEX", ts_key, ttl, tostring(now))
 return allowed
 `)
 
-// RedisRateLimitStore is the opt-in distributed alternative to the
-// in-memory Store. Selected via RateLimiterConfig.Backend = "redis".
 type RedisRateLimitStore struct {
 	client *redis.Client
 	rate   float64
@@ -104,9 +94,6 @@ func (s *RedisRateLimitStore) Allow(key string) bool {
 
 	res, err := tokenBucketScript.Run(ctx, s.client, []string{s.prefix + key}, s.rate, s.burst, now).Int()
 	if err != nil {
-		// Fail OPEN rather than blocking all traffic if Redis is briefly
-		// unavailable — a rate limiter outage should degrade to "no
-		// limiting", not "everyone gets 429". Logged so it's visible.
 		logger.LogWarn("[RateLimit] Redis error, allowing request through: %v", err)
 		return true
 	}

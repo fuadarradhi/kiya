@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/sessions"
 
 	"github.com/fuadarradhi/kiya/internal/logger"
+	"github.com/fuadarradhi/kiya/internal/metrics"
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/security"
 	"github.com/fuadarradhi/kiya/internal/web"
@@ -44,7 +45,7 @@ type Router struct {
 	sessionStore sessions.Store
 	renderer     *web.Renderer
 
-	rateLimiter      *security.Store
+	rateLimiter      security.RateLimitStore
 	keyFunc          func(r *http.Request, sess *Session) string
 	forceHTTPS       bool
 	maxWAFBufferSize int64
@@ -70,6 +71,8 @@ type Router struct {
 
 	routeNames      map[string]string
 	healthCheckPath string
+
+	metrics *metrics.Collector
 
 	currentUserFunc func(*Context) (any, string)
 }
@@ -143,6 +146,8 @@ func (r *Router) clone() *Router {
 
 		routeNames:      r.routeNames,
 		healthCheckPath: r.healthCheckPath,
+
+		metrics: r.metrics,
 
 		currentUserFunc: r.currentUserFunc,
 	}
@@ -251,6 +256,12 @@ func (r *Router) createRootHandler() http.Handler {
 }
 
 func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
+	start := time.Now()
+	if r.metrics != nil {
+		r.metrics.StartRequest()
+		defer r.metrics.EndRequest()
+	}
+
 	defer func() {
 		if err := recover(); err != nil {
 			logger.LogError("PANIC recovered (Global): %v", err)
@@ -401,6 +412,9 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	if r.rateLimiter != nil {
 		key := r.keyFunc(req, res.Session())
 		if !r.rateLimiter.Allow(key) {
+			if r.metrics != nil {
+				r.metrics.IncRateLimited()
+			}
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -472,6 +486,10 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		statusCode = statusRec.StatusCode()
 	} else if ww, ok := w.(router.StatusRecorder); ok {
 		statusCode = ww.StatusCode()
+	}
+
+	if r.metrics != nil {
+		r.metrics.Observe(req.Method, statusCode, time.Since(start))
 	}
 
 	shouldLog := true
