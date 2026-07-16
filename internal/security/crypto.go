@@ -1,4 +1,4 @@
-package web
+package security
 
 import (
 	"crypto/aes"
@@ -7,20 +7,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/fuadarradhi/kiya/internal/security"
-	"github.com/fuadarradhi/kiya/internal/util"
-)
-
-var (
-	reFormTag    = regexp.MustCompile(`(?i)<form\b[^>]*>`)
-	reMethodAttr = regexp.MustCompile(`(?i)method\s*=\s*["']?\s*(\w+)`)
-	reHeadTag    = regexp.MustCompile(`(?i)<head\b[^>]*>`)
 )
 
 func Encrypt(plaintext []byte, encryptKey []byte) (string, error) {
@@ -95,7 +84,7 @@ func DecryptString(encoded string, encryptKey []byte) (string, error) {
 	return string(plaintext), nil
 }
 
-func GenerateCSRFToken(session *security.Session, encryptKey []byte) (string, error) {
+func GenerateCSRFToken(session *Session, encryptKey []byte) (string, error) {
 	if len(encryptKey) == 0 {
 		return "", fmt.Errorf("encryption key not configured")
 	}
@@ -113,7 +102,7 @@ func GenerateCSRFToken(session *security.Session, encryptKey []byte) (string, er
 	return EncryptString(plaintext, encryptKey)
 }
 
-func VerifyCSRFToken(token string, session *security.Session, encryptKey []byte) bool {
+func VerifyCSRFToken(token string, session *Session, encryptKey []byte) bool {
 	if len(encryptKey) == 0 || token == "" {
 		return false
 	}
@@ -155,64 +144,4 @@ func VerifyCSRFToken(token string, session *security.Session, encryptKey []byte)
 	}
 
 	return true
-}
-
-func ExtractIP(req *http.Request) string {
-	if req == nil {
-		return ""
-	}
-	return util.RealIP(req)
-}
-
-func InjectCSRFIntoForms(html string, token string) string {
-	if token == "" {
-		return html
-	}
-
-	if strings.Contains(html, `name="csrf_token"`) ||
-		strings.Contains(html, `name='csrf_token'`) {
-		return html
-	}
-
-	escapedToken := util.HTMLEscape(token)
-	csrfInput := fmt.Sprintf(
-		`<input type="hidden" name="csrf_token" value="%s">`,
-		escapedToken,
-	)
-
-	return reFormTag.ReplaceAllStringFunc(html, func(match string) string {
-		methodMatches := reMethodAttr.FindStringSubmatch(match)
-
-		method := "GET"
-		if len(methodMatches) >= 2 && methodMatches[1] != "" {
-			method = strings.ToUpper(methodMatches[1])
-		}
-
-		if method == "GET" {
-			return match
-		}
-
-		return match + csrfInput
-	})
-}
-
-func InjectCSRFMeta(html string, token string) string {
-	if token == "" {
-		return html
-	}
-
-	if strings.Contains(html, `name="csrf-token"`) ||
-		strings.Contains(html, `name='csrf-token'`) {
-		return html
-	}
-
-	escapedToken := util.HTMLEscape(token)
-	meta := fmt.Sprintf(
-		`<meta name="csrf-token" content="%s">`,
-		escapedToken,
-	)
-
-	return reHeadTag.ReplaceAllStringFunc(html, func(match string) string {
-		return match + meta
-	})
 }

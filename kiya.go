@@ -151,7 +151,7 @@ func New(opts ...Option) (*Router, error) {
 		logger.LogInfo("Session disabled via config")
 	}
 
-	wafInstance, err := router.InitWAF(cfg.Debug)
+	wafInstance, err := security.InitWAF(cfg.Debug)
 	if err != nil {
 		logger.LogWarn("Failed to initialize WAF: %v. Server running WITHOUT WAF protection.", err)
 	}

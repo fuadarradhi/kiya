@@ -6,21 +6,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
-func InitLogger(debug bool, token, group string, enabled bool) {
-	logger.Init(logger.Config{
-		Debug:           debug,
-		Token:           token,
-		Group:           group,
-		LogPath:         "./temp/log",
-		WAFPath:         "./temp/waf",
-		TelegramEnabled: enabled,
-	})
-}
-
-func CloseLogger() {
-	logger.Close()
-}
-
 func LogInfo(format string, v ...any) {
 	logger.LogInfo(format, v...)
 }

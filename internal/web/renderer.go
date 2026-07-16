@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"github.com/flosch/pongo2/v6"
+
+	"github.com/fuadarradhi/kiya/internal/security"
 )
 
 type EmbedLoader struct {
@@ -97,7 +99,7 @@ func NewRenderer(embedFS fs.FS) *Renderer {
 				return nil, &pongo2.Error{Sender: "func:encrypt", OrigError: errors.New("invalid encryption key")}
 			}
 
-			encoded, err := Encrypt([]byte(plaintext), encKey)
+			encoded, err := security.Encrypt([]byte(plaintext), encKey)
 			if err != nil {
 				return nil, &pongo2.Error{Sender: "func:encrypt", OrigError: err}
 			}

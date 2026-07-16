@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"github.com/fuadarradhi/kiya/internal/router"
+	"github.com/fuadarradhi/kiya/internal/security"
+	"github.com/fuadarradhi/kiya/internal/util"
 	"github.com/fuadarradhi/kiya/internal/web"
 )
 
@@ -228,7 +230,7 @@ func (c *Context) renderHTML(code int, name string, data ...Map) error {
 
 	var csrfToken string
 	if c.csrfEnabled && len(c.encryptKey) > 0 {
-		if token, err := web.GenerateCSRFToken(c.session, c.encryptKey); err == nil {
+		if token, err := security.GenerateCSRFToken(c.session, c.encryptKey); err == nil {
 			csrfToken = token
 			ctx["csrf_token"] = csrfToken
 		}
@@ -379,19 +381,19 @@ func (c *Context) SaveFile(key string, dst string) error {
 }
 
 func (c *Context) Encrypt(plaintext []byte) (string, error) {
-	return web.Encrypt(plaintext, c.encryptKey)
+	return security.Encrypt(plaintext, c.encryptKey)
 }
 
 func (c *Context) Decrypt(encoded string) ([]byte, error) {
-	return web.Decrypt(encoded, c.encryptKey)
+	return security.Decrypt(encoded, c.encryptKey)
 }
 
 func (c *Context) EncryptString(plaintext string) (string, error) {
-	return web.EncryptString(plaintext, c.encryptKey)
+	return security.EncryptString(plaintext, c.encryptKey)
 }
 
 func (c *Context) DecryptString(encoded string) (string, error) {
-	return web.DecryptString(encoded, c.encryptKey)
+	return security.DecryptString(encoded, c.encryptKey)
 }
 
 func (c *Context) EncryptID(id int64) (string, error) {
@@ -418,15 +420,15 @@ func (c *Context) DecryptID(encoded ...string) (int64, error) {
 }
 
 func (c *Context) GenerateCSRFToken() (string, error) {
-	return web.GenerateCSRFToken(c.session, c.encryptKey)
+	return security.GenerateCSRFToken(c.session, c.encryptKey)
 }
 
 func (c *Context) VerifyCSRFToken(token string) bool {
-	return web.VerifyCSRFToken(token, c.session, c.encryptKey)
+	return security.VerifyCSRFToken(token, c.session, c.encryptKey)
 }
 
 func (c *Context) ExtractIP() string {
-	return web.ExtractIP(c.request)
+	return util.RealIP(c.request)
 }
 
 func (c *Context) NewWebSocket() (*web.WebSocketConn, error) {

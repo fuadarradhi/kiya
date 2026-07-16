@@ -251,7 +251,7 @@ func (r *Router) createRootHandler() http.Handler {
 				return
 			}
 		}
-		router.WrapWithWAF(rootHandler, r.waf, r.maxWAFBufferSize).ServeHTTP(w, req)
+		security.WrapWithWAF(rootHandler, r.waf, r.maxWAFBufferSize).ServeHTTP(w, req)
 	})
 }
 
