@@ -5,10 +5,12 @@ import (
 
 	"github.com/gorilla/sessions"
 
+	"github.com/fuadarradhi/kiya/internal/db"
+	"github.com/fuadarradhi/kiya/internal/httperr"
 	"github.com/fuadarradhi/kiya/internal/security"
 )
 
-type HandlerFunc func(res *Resources) error
+type HandlerFunc func(c *Context) error
 
 type Middleware func(HandlerFunc) HandlerFunc
 
@@ -20,35 +22,10 @@ func NewSession(raw *sessions.Session, r *http.Request, w http.ResponseWriter) *
 	return security.NewSession(raw, r, w)
 }
 
-type HTTPError struct {
-	Code    int
-	Message string
-	Err     error
-}
+type HTTPError = httperr.HTTPError
 
 func NewHTTPError(code int, msg string, err ...error) *HTTPError {
-	e := &HTTPError{
-		Code:    code,
-		Message: msg,
-	}
-	if len(err) > 0 {
-		e.Err = err[0]
-	}
-	return e
-}
-
-func (e *HTTPError) Error() string {
-	if e.Message != "" {
-		return e.Message
-	}
-	if e.Err != nil {
-		return e.Err.Error()
-	}
-	return http.StatusText(e.Code)
-}
-
-func (e *HTTPError) Unwrap() error {
-	return e.Err
+	return httperr.New(code, msg, err...)
 }
 
 type RouteInfo struct {
@@ -56,3 +33,5 @@ type RouteInfo struct {
 	Path   string
 	Name   string
 }
+
+type WhereFunc = db.WhereFunc

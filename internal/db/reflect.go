@@ -18,6 +18,7 @@ type dbCachedField struct {
 	isNullable      bool
 	isPrimary       bool
 	isAutoincrement bool
+	historyExclude  bool
 }
 
 type dbCachedStruct struct {
@@ -55,7 +56,7 @@ func getStructInfo(typ reflect.Type) (*dbCachedStruct, error) {
 		}
 
 		switch field.Name {
-		case "__db", "__res", "__self", "__hasSoftDelete":
+		case "__db", "__res", "__self", "__hasSoftDelete", "__tx":
 			continue
 		}
 
@@ -87,6 +88,10 @@ func getStructInfo(typ reflect.Type) (*dbCachedStruct, error) {
 			case "autoincrement":
 				fInfo.isAutoincrement = true
 			}
+		}
+
+		if field.Tag.Get("history") == "-" {
+			fInfo.historyExclude = true
 		}
 
 		if fInfo.isAutoincrement {
@@ -142,6 +147,129 @@ func getTableNameFromModel(model any) (string, error) {
 	return info.defaultName, nil
 }
 
+func PrimaryKeyColumn(model any) (string, error) {
+	pks, err := GetPrimaryKeys(model)
+	if err != nil {
+		return "", err
+	}
+	if len(pks) > 0 {
+		return pks[0].ColumnName, nil
+	}
+	return "id", nil
+}
+
+func SetPrimaryKeyValue(model any, id int64) error {
+	val := reflect.ValueOf(model)
+	if val.Kind() != reflect.Ptr || val.IsNil() {
+		return errors.New("model must be a non-nil pointer")
+	}
+	val = val.Elem()
+	if val.Kind() != reflect.Struct {
+		return errors.New("model must point to a struct")
+	}
+
+	info, err := getStructInfo(val.Type())
+	if err != nil {
+		return err
+	}
+
+	var target *dbCachedField
+	for i := range info.fields {
+		if info.fields[i].isPrimary {
+			target = &info.fields[i]
+			break
+		}
+	}
+	if target == nil {
+		for i := range info.fields {
+			if info.fields[i].name == "id" {
+				target = &info.fields[i]
+				break
+			}
+		}
+	}
+	if target == nil {
+		return errors.New("no primary key field found on model")
+	}
+
+	fieldVal := val.Field(target.idx)
+	if !fieldVal.CanSet() {
+		return errors.New("primary key field is not settable")
+	}
+
+	switch fieldVal.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fieldVal.SetInt(id)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		fieldVal.SetUint(uint64(id))
+	default:
+		return errors.New("primary key field is not an integer type")
+	}
+	return nil
+}
+
+func StructToHistoryMap(model any, cols []string) (map[string]any, error) {
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return nil, errors.New("struct pointer is nil")
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return nil, errors.New("input must be a struct")
+	}
+
+	info, err := getStructInfo(val.Type())
+	if err != nil {
+		return nil, err
+	}
+
+	colsSet := make(map[string]bool)
+	for _, c := range cols {
+		colsSet[c] = true
+	}
+
+	data := make(map[string]any)
+	for _, f := range info.fields {
+		if f.historyExclude || f.isPrimary || f.isAutoincrement {
+			continue
+		}
+		if len(colsSet) > 0 && !colsSet[f.name] {
+			continue
+		}
+		data[f.name] = val.Field(f.idx).Interface()
+	}
+	return data, nil
+}
+
+func columnsForUpsert(model any) ([]string, error) {
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		if val.IsNil() {
+			return nil, errors.New("model is nil")
+		}
+		val = val.Elem()
+	}
+	if val.Kind() != reflect.Struct {
+		return nil, errors.New("model must be a struct")
+	}
+
+	info, err := getStructInfo(val.Type())
+	if err != nil {
+		return nil, err
+	}
+
+	var cols []string
+	for _, f := range info.fields {
+		if f.isPrimary || f.isAutoincrement || f.isAutofill {
+			continue
+		}
+		cols = append(cols, f.name)
+	}
+	return cols, nil
+}
+
 func isZero(v reflect.Value) bool {
 	if !v.IsValid() {
 		return true
@@ -171,7 +299,7 @@ func isZero(v reflect.Value) bool {
 	return false
 }
 
-func structToMap(model any, selectedCols []string, forcedNullable map[string]bool) (map[string]any, error) {
+func structToMap(model any, selectedCols []string) (map[string]any, error) {
 	val := reflect.ValueOf(model)
 	if val.Kind() == reflect.Ptr {
 		if val.IsNil() {
@@ -215,9 +343,7 @@ func structToMap(model any, selectedCols []string, forcedNullable map[string]boo
 		fieldVal := val.Field(f.idx)
 		valInterface := fieldVal.Interface()
 
-		isNullable := f.isNullable || (forcedNullable != nil && forcedNullable[f.name])
-
-		if isNullable {
+		if f.isNullable {
 			if isZero(fieldVal) {
 				data[f.name] = nil
 			} else {
@@ -269,8 +395,6 @@ func assignAutoIncrementID(model any, id int64) {
 		}
 	}
 
-	// Fallback: field dengan tag db bernama "id" (case-insensitive),
-	// untuk struct yang tidak menandai autoincrement secara eksplisit.
 	for _, f := range info.fields {
 		if strings.EqualFold(f.name, "id") {
 			fieldVal := val.Field(f.idx)
@@ -342,16 +466,22 @@ func setFieldValue(field reflect.Value, value interface{}) {
 		}
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		if val.Kind() == reflect.Int64 {
+		switch val.Kind() {
+		case reflect.Int64:
 			field.SetInt(val.Int())
-		} else if val.Kind() == reflect.Float64 {
+		case reflect.Uint64:
+			field.SetInt(int64(val.Uint()))
+		case reflect.Float64:
 			field.SetInt(int64(val.Float()))
 		}
 
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		if val.Kind() == reflect.Int64 {
+		switch val.Kind() {
+		case reflect.Uint64:
+			field.SetUint(val.Uint())
+		case reflect.Int64:
 			field.SetUint(uint64(val.Int()))
-		} else if val.Kind() == reflect.Float64 {
+		case reflect.Float64:
 			field.SetUint(uint64(val.Float()))
 		}
 
@@ -371,6 +501,11 @@ func setFieldValue(field reflect.Value, value interface{}) {
 		if val.Type() == field.Type() {
 			field.Set(val)
 		}
+
+	case reflect.Ptr:
+		elem := reflect.New(field.Type().Elem())
+		setFieldValue(elem.Elem(), value)
+		field.Set(elem)
 
 	default:
 		if val.Type().ConvertibleTo(field.Type()) {

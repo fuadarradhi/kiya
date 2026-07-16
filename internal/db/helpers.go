@@ -67,6 +67,29 @@ func GetPrimaryKeys(model any) ([]PrimaryKeyInfo, error) {
 	return pks, nil
 }
 
+func PrimaryKeyValue(model any) (int64, error) {
+	pks, err := GetPrimaryKeys(model)
+	if err != nil {
+		return 0, err
+	}
+	if len(pks) == 0 {
+		return 0, errors.New("kiya: no primary key field found on model")
+	}
+	return toInt64(pks[0].Value)
+}
+
+func toInt64(v any) (int64, error) {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return rv.Int(), nil
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int64(rv.Uint()), nil
+	default:
+		return 0, errors.New("kiya: primary key value is not an integer type")
+	}
+}
+
 func (b *Builder) SetSoftDeleteCondition(cond string) {
 	b.softDeleteCondition = cond
 }

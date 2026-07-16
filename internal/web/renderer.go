@@ -25,7 +25,10 @@ func newEmbedLoader(fsys fs.FS) *EmbedLoader {
 }
 
 func (l *EmbedLoader) Abs(base, name string) string {
-	return path.Clean(name)
+	if path.IsAbs(name) {
+		return path.Clean(strings.TrimPrefix(name, "/"))
+	}
+	return path.Clean(path.Join(path.Dir(base), name))
 }
 
 func (l *EmbedLoader) Get(name string) (io.Reader, error) {

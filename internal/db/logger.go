@@ -9,14 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fuadarradhi/kiya/internal/ctxkey"
 	"github.com/fuadarradhi/kiya/internal/logger"
 )
 
 var reLogPlaceholder = regexp.MustCompile(`('(?:[^']|'')*')|(\?)`)
-
-type ctxKey string
-
-const RequestIDKey ctxKey = "request_id"
 
 type QueryLog struct {
 	Query    string
@@ -225,7 +222,7 @@ func (e *LoggedExecutor) Begin(ctx context.Context) (Tx, error) {
 
 func ctxToMap(ctx context.Context) map[string]any {
 	m := make(map[string]any)
-	if reqID := ctx.Value(RequestIDKey); reqID != nil {
+	if reqID := ctx.Value(ctxkey.RequestID); reqID != nil {
 		m["request_id"] = reqID
 	}
 	return m

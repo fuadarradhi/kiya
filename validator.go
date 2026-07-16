@@ -27,8 +27,11 @@ var (
 
 var validColumnNameRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
+type prefixer interface{ Prefix() string }
+type suffixer interface{ Suffix() string }
+
 type Validator struct {
-	res            *Resources
+	c              *Context
 	globalErrors   []error
 	values         Map
 	validateErrors map[string][]string
@@ -38,6 +41,8 @@ type Validator struct {
 
 	pkCol string
 	pkVal any
+
+	boundVal any
 }
 
 func init() {
@@ -89,13 +94,15 @@ func (v *Validator) SetTable(table string) *Validator {
 }
 
 func (v *Validator) Bind(form any, bind ...bool) *Validator {
+	v.boundVal = form
+
 	shouldBind := true
 	if len(bind) > 0 {
 		shouldBind = bind[0]
 	}
 
 	if shouldBind {
-		if err := v.res.Bind(form); err != nil {
+		if err := v.c.Bind(form); err != nil {
 			v.globalErrors = append(v.globalErrors, err)
 		}
 	}
@@ -186,14 +193,14 @@ func valUnique(v *Validator, param string) RulesFunc {
 			return fmt.Errorf("invalid column name: %s", param)
 		}
 
-		if v.res.Database() == nil {
+		if v.c.Database() == nil {
 			return errors.New("database not available")
 		}
 
 		var found bool
 		var err error
 
-		builder := v.res.Database().Table(v.uniqueTable).Where("deleted_at IS NULL")
+		builder := v.c.Database().Table(v.uniqueTable).Where("deleted_at IS NULL")
 
 		if v.pkCol != "" && v.pkVal != nil && !reflect.ValueOf(v.pkVal).IsZero() {
 			if !validColumnNameRegex.MatchString(v.pkCol) {
@@ -327,7 +334,7 @@ func (v *Validator) Validate() error {
 		for i, err := range v.globalErrors {
 			v.addError(fmt.Sprintf("binding_error_%d", i), err.Error())
 		}
-		return v.Errors()
+		return ErrValidationFailed
 	}
 
 	for field, rulesMap := range v.parsedRules {
@@ -359,11 +366,46 @@ func (v *Validator) Validate() error {
 	}
 
 	if len(v.validateErrors) > 0 {
-		v.Errors()
 		return ErrValidationFailed
 	}
 
 	return nil
+}
+
+func Validate(validators ...*Validator) error {
+	if len(validators) == 0 {
+		return nil
+	}
+
+	hasError := false
+	merged := make(map[string][]string)
+
+	for _, v := range validators {
+		if err := v.Validate(); err != nil {
+			hasError = true
+		}
+
+		prefix := ""
+		if p, ok := v.boundVal.(prefixer); ok {
+			prefix = p.Prefix()
+		}
+		suffix := ""
+		if s, ok := v.boundVal.(suffixer); ok {
+			suffix = s.Suffix()
+		}
+
+		for field, msgs := range v.validateErrors {
+			key := prefix + field + suffix
+			merged[key] = append(merged[key], msgs...)
+		}
+	}
+
+	if !hasError {
+		return nil
+	}
+
+	validators[0].validateErrors = merged
+	return ErrValidationFailed
 }
 
 func (v *Validator) addError(field string, msg string) {
@@ -379,7 +421,7 @@ func (v *Validator) Error(field string, err string) *Validator {
 }
 
 func (v *Validator) Errors() error {
-	v.res.APIResponse(http.StatusUnprocessableEntity,
+	v.c.APIResponse(http.StatusUnprocessableEntity,
 		"there are errors in your input, please check and try again",
 		v.validateErrors, []string{},
 	)

@@ -31,7 +31,7 @@ const RequestIDKey contextKey = "request_id"
 type Router struct {
 	tree         *router.Tree
 	middleware   []Middleware
-	errorHandler func(*Resources, int, string, error)
+	errorHandler func(*Context, int, string, error)
 	noRoute      HandlerFunc
 	noMethod     HandlerFunc
 	prefix       string
@@ -70,12 +70,14 @@ type Router struct {
 
 	routeNames      map[string]string
 	healthCheckPath string
+
+	currentUserFunc func(*Context) (any, string)
 }
 
 func adapterFunc(h HandlerFunc) router.HandlerFunc {
 	return func(c any) error {
-		if res, ok := c.(*Resources); ok {
-			return h(res)
+		if c, ok := c.(*Context); ok {
+			return h(c)
 		}
 		return errors.New("invalid context type")
 	}
@@ -83,57 +85,72 @@ func adapterFunc(h HandlerFunc) router.HandlerFunc {
 
 func adapterMiddleware(m Middleware) router.Middleware {
 	return func(next router.HandlerFunc) router.HandlerFunc {
-		kiyaNext := func(res *Resources) error {
-			return next(res)
+		kiyaNext := func(c *Context) error {
+			return next(c)
 		}
 		kiyaWrapped := m(kiyaNext)
 		return adapterFunc(kiyaWrapped)
 	}
 }
 
-func (r *Router) SetErrorHandler(fn func(*Resources, int, string, error)) { r.errorHandler = fn }
-func (r *Router) SetNoRoute(h HandlerFunc)                                { r.noRoute = h }
-func (r *Router) SetNoMethod(h HandlerFunc)                               { r.noMethod = h }
+func (r *Router) SetErrorHandler(fn func(*Context, int, string, error)) { r.errorHandler = fn }
+func (r *Router) SetNoRoute(h HandlerFunc)                              { r.noRoute = h }
+func (r *Router) SetNoMethod(h HandlerFunc)                             { r.noMethod = h }
 
 func (r *Router) Use(m ...Middleware) {
 	r.middleware = append(r.middleware, m...)
 }
 
-func (r *Router) Route(prefix string, fn GroupFunc) {
-	sub := &Router{
-		tree:               r.tree,
-		middleware:         append([]Middleware{}, r.middleware...),
-		errorHandler:       r.errorHandler,
-		noRoute:            r.noRoute,
-		noMethod:           r.noMethod,
-		prefix:             r.prefix + prefix,
-		resPool:            r.resPool,
-		waf:                r.waf,
-		sessionStore:       r.sessionStore,
-		database:           r.database,
-		renderer:           r.renderer,
-		rateLimiter:        r.rateLimiter,
-		keyFunc:            r.keyFunc,
-		forceHTTPS:         r.forceHTTPS,
-		debug:              r.debug,
-		maxWAFBufferSize:   r.maxWAFBufferSize,
-		sessionMaxAge:      r.sessionMaxAge,
-		encryptKey:         r.encryptKey,
-		cachePaths:         r.cachePaths,
-		noLogSuccessPaths:  r.noLogSuccessPaths,
-		csrfEnabled:        r.csrfEnabled,
-		csrfExemptPaths:    r.csrfExemptPaths,
-		csp:                r.csp,
-		cspExemptPaths:     r.cspExemptPaths,
-		wafExemptPaths:     r.wafExemptPaths,
+func (r *Router) clone() *Router {
+	return &Router{
+		tree:         r.tree,
+		middleware:   append([]Middleware{}, r.middleware...),
+		errorHandler: r.errorHandler,
+		noRoute:      r.noRoute,
+		noMethod:     r.noMethod,
+		prefix:       r.prefix,
+		resPool:      r.resPool,
+		server:       r.server,
+		addr:         r.addr,
+		waf:          r.waf,
+		database:     r.database,
+		sessionStore: r.sessionStore,
+		renderer:     r.renderer,
+
+		rateLimiter:      r.rateLimiter,
+		keyFunc:          r.keyFunc,
+		forceHTTPS:       r.forceHTTPS,
+		maxWAFBufferSize: r.maxWAFBufferSize,
+		sessionMaxAge:    r.sessionMaxAge,
+		debug:            r.debug,
+		sameSite:         r.sameSite,
+		encryptKey:       r.encryptKey,
+
+		cachePaths:        r.cachePaths,
+		noLogSuccessPaths: r.noLogSuccessPaths,
+
+		csrfEnabled:     r.csrfEnabled,
+		csrfExemptPaths: r.csrfExemptPaths,
+
+		csp:            r.csp,
+		cspExemptPaths: r.cspExemptPaths,
+		wafExemptPaths: r.wafExemptPaths,
+
 		corsConfig:         r.corsConfig,
 		compressionEnabled: r.compressionEnabled,
 		compressionLevel:   r.compressionLevel,
 		requestIDEnabled:   r.requestIDEnabled,
-		routeNames:         r.routeNames,
-		healthCheckPath:    r.healthCheckPath,
-		sameSite:           r.sameSite,
+
+		routeNames:      r.routeNames,
+		healthCheckPath: r.healthCheckPath,
+
+		currentUserFunc: r.currentUserFunc,
 	}
+}
+
+func (r *Router) Route(prefix string, fn GroupFunc) {
+	sub := r.clone()
+	sub.prefix = r.prefix + prefix
 	fn(sub)
 }
 
@@ -193,7 +210,7 @@ func (r *Router) Static(prefix, root string) error {
 }
 
 func (r *Router) StaticFS(prefix string, fsys fs.FS) error {
-	r.Get(prefix+"/{path:*}", func(c *Resources) error {
+	r.Get(prefix+"/{path:*}", func(c *Context) error {
 		p := c.Param("path")
 		return router.ServeStatic(c.Response(), c.Request(), fsys, p)
 	})
@@ -201,7 +218,7 @@ func (r *Router) StaticFS(prefix string, fsys fs.FS) error {
 }
 
 func (r *Router) Redirect(path, target string, code int) {
-	r.Get(path, func(c *Resources) error {
+	r.Get(path, func(c *Context) error {
 		http.Redirect(c.Response(), c.Request(), target, code)
 		return nil
 	})
@@ -334,7 +351,7 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		h.Set("Expires", "0")
 	}
 
-	res := r.resPool.Get().(*Resources)
+	res := r.resPool.Get().(*Context)
 	defer func() {
 		res.reset(nil, nil, nil)
 		r.resPool.Put(res)
@@ -347,6 +364,7 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	res.reset(w, req, r.renderer)
 	res.encryptKey = r.encryptKey
 	res.csrfEnabled = r.csrfEnabled
+	res.currentUserFunc = r.currentUserFunc
 
 	defer func() {
 		if req.MultipartForm != nil {
@@ -492,7 +510,7 @@ func chain(h HandlerFunc, m ...Middleware) router.HandlerFunc {
 	return next
 }
 
-func (r *Router) handleError(c *Resources, err error) {
+func (r *Router) handleError(c *Context, err error) {
 	if err == nil {
 		return
 	}
@@ -524,7 +542,7 @@ func (r *Router) handleError(c *Resources, err error) {
 	r.errorHandler(c, code, msg, err)
 }
 
-func (r *Router) defaultErrorHandler(c *Resources, code int, msg string, err error) {
+func (r *Router) defaultErrorHandler(c *Context, code int, msg string, err error) {
 	if c.IsAJAX() {
 		c.APIResponse(code, http.StatusText(code), map[string][]string{}, []string{})
 		return
@@ -537,11 +555,11 @@ func (r *Router) defaultErrorHandler(c *Resources, code int, msg string, err err
 	}
 }
 
-func (r *Router) defaultNoRoute(c *Resources) error {
+func (r *Router) defaultNoRoute(c *Context) error {
 	return c.String(http.StatusNotFound, "404 page not found")
 }
 
-func (r *Router) defaultNoMethod(c *Resources) error {
+func (r *Router) defaultNoMethod(c *Context) error {
 	return c.String(http.StatusMethodNotAllowed, "405 method not allowed")
 }
 

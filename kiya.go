@@ -81,6 +81,8 @@ func New(cfg Config) (*Router, error) {
 		corsConfig:         cfg.CORS,
 		compressionEnabled: cfg.Compression.Enabled,
 		requestIDEnabled:   true,
+
+		currentUserFunc: cfg.CurrentUserFunc,
 	}
 
 	if cfg.Compression.Enabled {
@@ -216,7 +218,7 @@ func New(cfg Config) (*Router, error) {
 
 	r.resPool = &sync.Pool{
 		New: func() any {
-			return &Resources{}
+			return &Context{}
 		},
 	}
 
@@ -248,7 +250,7 @@ func New(cfg Config) (*Router, error) {
 			hcPath = "/health"
 		}
 		r.healthCheckPath = hcPath
-		r.Get(hcPath, func(c *Resources) error {
+		r.Get(hcPath, func(c *Context) error {
 			status := "ok"
 			checks := make(map[string]any)
 

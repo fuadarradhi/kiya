@@ -94,15 +94,15 @@ func NewDatabase(cfg DatabaseConfig) (*DB, error) {
 
 	logger.LogInfo("[Kiya] Database connected | Driver: %s | Host: %s:%s | DB: %s | TZ: %s", cfg.Driver, host, cfg.Port, cfg.Name, tz)
 
-	var dbDefaultCond db.DefaultConditionFunc
-	if cfg.DefaultCondition != nil {
-		dbDefaultCond = func(fields []string, res any) map[string]any {
-			if r, ok := res.(*Resources); ok {
-				return cfg.DefaultCondition(fields, r)
+	var dbScope db.ScopeFunc
+	if cfg.Scope != nil {
+		dbScope = func(fields []string, res any) map[string]any {
+			if r, ok := res.(*Context); ok {
+				return cfg.Scope(fields, r)
 			}
 			return nil
 		}
 	}
 
-	return db.NewDatabase(sqlxDB, dialect, sqlxDB.Close, dbDefaultCond), nil
+	return db.NewDatabase(sqlxDB, dialect, sqlxDB.Close, dbScope), nil
 }

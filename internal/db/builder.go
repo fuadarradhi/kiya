@@ -8,11 +8,12 @@ import (
 	"reflect"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/fuadarradhi/kiya/internal/logger"
 	"github.com/jmoiron/sqlx"
 )
+
+type WhereFunc func(*Builder)
 
 type whereClause struct {
 	boolean string
@@ -66,17 +67,20 @@ type Builder struct {
 	executor Executor
 	ctx      context.Context
 
-	dest             any
-	res              any
-	defaultCondition DefaultConditionFunc
+	dest  any
+	res   any
+	scope ScopeFunc
 
-	softDeleteCondition  string
-	skipDefaultCondition bool
+	softDeleteCondition string
+
+	scopeSkipped bool
+	scopeApplied bool
+
+	unsafeAllowEmptyWhere   bool
+	lockForUpdate           bool
+	historyTrackingDisabled bool
 }
 
-// resultAffected adalah helper tunggal untuk mengubah (Result, error) dari
-// executor menjadi (rowsAffected, error). Semua operasi tulis publik
-// memakai ini agar konsisten tidak pernah membocorkan tipe Result.
 func resultAffected(res Result, err error) (int64, error) {
 	if err != nil {
 		return 0, err
@@ -108,8 +112,23 @@ func (b *Builder) Use(tx Tx) *Builder {
 	return b
 }
 
-func (b *Builder) WithoutDefaultCondition() *Builder {
-	b.skipDefaultCondition = true
+func (b *Builder) NoScope() *Builder {
+	b.scopeSkipped = true
+	return b
+}
+
+func (b *Builder) Unsafe() *Builder {
+	b.unsafeAllowEmptyWhere = true
+	return b
+}
+
+func (b *Builder) NoHistory() *Builder {
+	b.historyTrackingDisabled = true
+	return b
+}
+
+func (b *Builder) LockForUpdate() *Builder {
+	b.lockForUpdate = true
 	return b
 }
 
@@ -130,9 +149,41 @@ func (b *Builder) Nullable(cols ...string) *Builder {
 	return b
 }
 
-func (b *Builder) Upsert(data any, updateCols ...string) (int64, error) {
-	b.onDuplicateUpdateCols = updateCols
-	return b.Insert(data)
+func (b *Builder) OnConflictUpdate(cols ...string) *Builder {
+	b.onDuplicateUpdateCols = cols
+	return b
+}
+
+func (b *Builder) Upsert(data ...any) error {
+	d := b.resolveOperand(data)
+	if d == nil {
+		return ErrEmptyData
+	}
+
+	if self, ok := structPtr(d); ok {
+		return b.upsertWithHistory(self)
+	}
+
+	return b.upsertRawConstraint(d)
+}
+
+func (b *Builder) upsertRawConstraint(d any) error {
+	if len(b.onDuplicateUpdateCols) == 0 {
+		if len(b.selects) > 0 {
+			for _, s := range b.selects {
+				b.onDuplicateUpdateCols = append(b.onDuplicateUpdateCols, s.expr)
+			}
+		} else {
+			cols, err := columnsForUpsert(d)
+			if err != nil {
+				return err
+			}
+			b.onDuplicateUpdateCols = cols
+		}
+	}
+
+	_, err := b.execInsertRaw(d)
+	return err
 }
 
 func (b *Builder) WhereEq(col string, val any) *Builder {
@@ -141,6 +192,54 @@ func (b *Builder) WhereEq(col string, val any) *Builder {
 		return b
 	}
 	return b.Where(fmt.Sprintf("%s = ?", safeCol), val)
+}
+
+func (b *Builder) WhereNotEq(col string, val any) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+	return b.Where(fmt.Sprintf("%s != ?", safeCol), val)
+}
+
+func (b *Builder) WhereGt(col string, val any) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+	return b.Where(fmt.Sprintf("%s > ?", safeCol), val)
+}
+
+func (b *Builder) WhereGte(col string, val any) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+	return b.Where(fmt.Sprintf("%s >= ?", safeCol), val)
+}
+
+func (b *Builder) WhereLt(col string, val any) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+	return b.Where(fmt.Sprintf("%s < ?", safeCol), val)
+}
+
+func (b *Builder) WhereLte(col string, val any) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+	return b.Where(fmt.Sprintf("%s <= ?", safeCol), val)
+}
+
+func (b *Builder) WhereLike(col string, pattern string) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+	return b.Where(fmt.Sprintf("%s LIKE ?", safeCol), pattern)
 }
 
 func (b *Builder) Where(expr string, args ...any) *Builder {
@@ -168,6 +267,24 @@ func (b *Builder) WhereIn(col string, vals []any) *Builder {
 		placeholders[i] = "?"
 	}
 	expr := fmt.Sprintf("%s IN (%s)", safeCol, strings.Join(placeholders, ", "))
+	return b.Where(expr, vals...)
+}
+
+func (b *Builder) WhereNotIn(col string, vals []any) *Builder {
+	safeCol := SanitizeIdentifier(col)
+	if safeCol == "" {
+		return b
+	}
+
+	if len(vals) == 0 {
+		return b
+	}
+
+	placeholders := make([]string, len(vals))
+	for i := range vals {
+		placeholders[i] = "?"
+	}
+	expr := fmt.Sprintf("%s NOT IN (%s)", safeCol, strings.Join(placeholders, ", "))
 	return b.Where(expr, vals...)
 }
 
@@ -347,8 +464,13 @@ func (b *Builder) clone() *Builder {
 	return &newB
 }
 
-func (b *Builder) applyDefaultCondition() {
-	if b.defaultCondition == nil || b.res == nil || b.skipDefaultCondition {
+func (b *Builder) applyScope() {
+	if b.scopeApplied {
+		return
+	}
+	b.scopeApplied = true
+
+	if b.scope == nil || b.res == nil || b.scopeSkipped {
 		return
 	}
 
@@ -376,7 +498,7 @@ func (b *Builder) applyDefaultCondition() {
 		}
 	}
 
-	conds := b.defaultCondition(fields, b.res)
+	conds := b.scope(fields, b.res)
 	if len(conds) == 0 {
 		return
 	}
@@ -441,18 +563,7 @@ func (b *Builder) applyDefaultCondition() {
 	}
 }
 
-func (b *Builder) Insert(data ...any) (int64, error) {
-	var d any
-	if len(data) > 0 {
-		d = data[0]
-	} else {
-		d = b.dest
-	}
-
-	if d == nil {
-		return 0, errors.New("insert data cannot be empty")
-	}
-
+func (b *Builder) execInsertRaw(d any) (int64, error) {
 	var tableName string
 	var mapData map[string]any
 	var structInfo *dbCachedStruct
@@ -508,7 +619,7 @@ func (b *Builder) Insert(data ...any) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		mapData, err = structToMap(d, selectedCols, b.nullableCols)
+		mapData, err = structToMap(d, selectedCols)
 		if err != nil {
 			return 0, err
 		}
@@ -516,7 +627,7 @@ func (b *Builder) Insert(data ...any) (int64, error) {
 		v := reflect.ValueOf(d)
 		if v.Kind() == reflect.Ptr {
 			if v.IsNil() {
-				return 0, errors.New("struct pointer is nil")
+				return 0, ErrModelNil
 			}
 			v = v.Elem()
 		}
@@ -529,7 +640,7 @@ func (b *Builder) Insert(data ...any) (int64, error) {
 	}
 
 	if len(mapData) == 0 {
-		return 0, errors.New("insert data cannot be empty")
+		return 0, ErrEmptyData
 	}
 
 	clone := b.clone()
@@ -547,11 +658,11 @@ func (b *Builder) Insert(data ...any) (int64, error) {
 
 	if clone.table == "" {
 		if tableName == "" {
-			return 0, errors.New("table name is required")
+			return 0, ErrTableRequired
 		}
 		clone.table = SanitizeIdentifier(tableName)
 		if clone.table == "" {
-			return 0, errors.New("invalid table name inferred from model")
+			return 0, ErrInvalidTableName
 		}
 	}
 
@@ -581,9 +692,27 @@ func (b *Builder) Insert(data ...any) (int64, error) {
 	return resultAffected(res, nil)
 }
 
+func (b *Builder) Insert(data ...any) error {
+	d := b.resolveOperand(data)
+	if d == nil {
+		return ErrEmptyData
+	}
+
+	if self, ok := structPtr(d); ok {
+		return b.insertWithHistory(self)
+	}
+
+	if m, ok := d.(map[string]any); ok && !b.historyTrackingDisabled {
+		return b.insertMapWithHistory(m)
+	}
+
+	_, err := b.execInsertRaw(d)
+	return err
+}
+
 func (b *Builder) InsertBatch(data []any) (int64, error) {
 	if len(data) == 0 {
-		return 0, errors.New("insert batch data cannot be empty")
+		return 0, ErrEmptyData
 	}
 
 	first := data[0]
@@ -601,7 +730,7 @@ func (b *Builder) InsertBatch(data []any) (int64, error) {
 
 	mapDataList := make([]map[string]any, 0, len(data))
 	for _, item := range data {
-		m, err := structToMap(item, selectedCols, b.nullableCols)
+		m, err := structToMap(item, selectedCols)
 		if err != nil {
 			return 0, err
 		}
@@ -611,7 +740,7 @@ func (b *Builder) InsertBatch(data []any) (int64, error) {
 	}
 
 	if len(mapDataList) == 0 {
-		return 0, errors.New("insert batch data cannot be empty after processing")
+		return 0, fmt.Errorf("%w after processing", ErrEmptyData)
 	}
 
 	var cols []string
@@ -658,11 +787,24 @@ func (b *Builder) InsertBatch(data []any) (int64, error) {
 	return resultAffected(clone.executor.Exec(clone.ctx, query, qArgs...))
 }
 
-func (b *Builder) execUpdate(data any, skipWhereCheck bool) (int64, error) {
-	b.applyDefaultCondition()
+func (b *Builder) checkWhereRequired() error {
+	if len(b.wheres) > 0 {
+		return nil
+	}
+	if b.unsafeAllowEmptyWhere {
+		logger.LogWarn("[DB Security] Unsafe() executed without WHERE clause on table '%s'", b.table)
+		return nil
+	}
+	return ErrWhereClauseRequired
+}
 
-	if !skipWhereCheck && len(b.wheres) == 0 {
-		return 0, errors.New("update requires where clause (safety check)")
+func (b *Builder) execUpdate(data any, skipWhereCheck bool) (int64, error) {
+	b.applyScope()
+
+	if !skipWhereCheck {
+		if err := b.checkWhereRequired(); err != nil {
+			return 0, err
+		}
 	}
 
 	var tableName string
@@ -718,14 +860,14 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (int64, error) {
 		if err != nil {
 			return 0, err
 		}
-		mapData, err = structToMap(data, selectedCols, b.nullableCols)
+		mapData, err = structToMap(data, selectedCols)
 		if err != nil {
 			return 0, err
 		}
 	}
 
 	if len(mapData) == 0 {
-		return 0, errors.New("update data cannot be empty")
+		return 0, ErrEmptyData
 	}
 
 	clone := b.clone()
@@ -734,11 +876,11 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (int64, error) {
 
 	if clone.table == "" {
 		if tableName == "" {
-			return 0, errors.New("table name is required")
+			return 0, ErrTableRequired
 		}
 		clone.table = SanitizeIdentifier(tableName)
 		if clone.table == "" {
-			return 0, errors.New("invalid table name inferred from model")
+			return 0, ErrInvalidTableName
 		}
 	}
 
@@ -746,28 +888,35 @@ func (b *Builder) execUpdate(data any, skipWhereCheck bool) (int64, error) {
 	return resultAffected(clone.executor.Exec(clone.ctx, query, args...))
 }
 
-func (b *Builder) Update(data ...any) (int64, error) {
-	var d any
-	if len(data) > 0 {
-		d = data[0]
-	} else {
-		d = b.dest
-	}
+func (b *Builder) Update(data ...any) error {
+	d := b.resolveOperand(data)
 	if d == nil {
-		return 0, errors.New("update data cannot be empty")
+		return ErrEmptyData
 	}
-	return b.execUpdate(d, false)
+
+	if self, ok := structPtr(d); ok {
+		return b.updateWithHistory(self)
+	}
+
+	if m, ok := d.(map[string]any); ok && !b.historyTrackingDisabled {
+		return b.updateMapWithHistory(m)
+	}
+
+	_, err := b.execUpdate(d, false)
+	return err
 }
 
 func (b *Builder) execDelete(model any, skipWhereCheck bool) (int64, error) {
-	b.applyDefaultCondition()
+	b.applyScope()
 
 	if b.softDeleteCondition != "" {
-		return b.execUpdate(map[string]any{"deleted_at": time.Now()}, skipWhereCheck)
+		return b.execUpdate(map[string]any{"deleted_at": nowFunc()}, skipWhereCheck)
 	}
 
-	if !skipWhereCheck && len(b.wheres) == 0 {
-		return 0, errors.New("delete requires where clause (safety check)")
+	if !skipWhereCheck {
+		if err := b.checkWhereRequired(); err != nil {
+			return 0, err
+		}
 	}
 
 	clone := b.clone()
@@ -782,45 +931,124 @@ func (b *Builder) execDelete(model any, skipWhereCheck bool) (int64, error) {
 		if clone.table == "" {
 			clone.table = SanitizeIdentifier(tblName)
 			if clone.table == "" {
-				return 0, errors.New("invalid table name inferred from model")
+				return 0, ErrInvalidTableName
 			}
 		}
 	}
 
 	if clone.table == "" {
-		return 0, errors.New("table name is required")
+		return 0, ErrTableRequired
 	}
 
 	query, args := clone.Build()
 	return resultAffected(clone.executor.Exec(clone.ctx, query, args...))
 }
 
-func (b *Builder) Delete(models ...any) (int64, error) {
-	var d any
-	if len(models) > 0 {
-		d = models[0]
-	} else {
-		d = b.dest
+func (b *Builder) execHardDelete(model any) (int64, error) {
+	clone := b.clone()
+	clone.softDeleteCondition = ""
+	clone.action = "delete"
+
+	if model != nil {
+		tblName, err := getTableNameFromModel(model)
+		if err != nil {
+			return 0, err
+		}
+		if clone.table == "" {
+			clone.table = SanitizeIdentifier(tblName)
+			if clone.table == "" {
+				return 0, ErrInvalidTableName
+			}
+		}
 	}
 
-	return b.execDelete(d, false)
+	if clone.table == "" {
+		return 0, ErrTableRequired
+	}
+
+	query, args := clone.Build()
+	return resultAffected(clone.executor.Exec(clone.ctx, query, args...))
 }
 
-func (b *Builder) Purge() (int64, error) {
-	b.softDeleteCondition = ""
-	return b.execDelete(nil, false)
+func (b *Builder) Delete(models ...any) error {
+	d := b.resolveOperand(models)
+
+	if self, ok := structPtr(d); ok {
+		return b.deleteWithHistory(self)
+	}
+
+	if !b.historyTrackingDisabled {
+		return b.deleteRawWithHistory(d)
+	}
+
+	_, err := b.execDelete(d, false)
+	return err
 }
 
-// Restore membatalkan soft-delete: set deleted_at = NULL pada baris yang
-// cocok dengan where/PK. softDeleteCondition sengaja dikosongkan supaya
-// baris yang sudah terhapus (deleted_at IS NOT NULL) ikut ter-update.
-func (b *Builder) Restore() (int64, error) {
+func (b *Builder) Purge(models ...any) error {
+	d := b.resolveOperand(models)
+
+	if self, ok := structPtr(d); ok {
+		return b.purgeWithModel(self)
+	}
+
 	b.softDeleteCondition = ""
-	return b.execUpdate(map[string]any{"deleted_at": nil}, false)
+	_, err := b.execDelete(d, false)
+	return err
+}
+
+func (b *Builder) PurgeAll(models ...any) (int64, error) {
+	d := b.resolveOperand(models)
+	b.softDeleteCondition = ""
+	return b.execDelete(d, true)
+}
+
+func (b *Builder) Restore(models ...any) error {
+	d := b.resolveOperand(models)
+
+	if self, ok := structPtr(d); ok {
+		return b.restoreWithHistory(self)
+	}
+
+	if !b.historyTrackingDisabled {
+		return b.restoreRawWithHistory()
+	}
+
+	b.softDeleteCondition = ""
+	_, err := b.execUpdate(map[string]any{"deleted_at": nil}, false)
+	return err
+}
+
+func (b *Builder) Retain(keepIDs []int64, purge bool, where ...WhereFunc) (int64, error) {
+	if b.dest == nil {
+		return 0, errors.New("kiya: Retain requires a bound model (call Bind() first)")
+	}
+
+	pkCol, err := PrimaryKeyColumn(b.dest)
+	if err != nil {
+		return 0, err
+	}
+
+	if len(keepIDs) > 0 {
+		ids := make([]any, len(keepIDs))
+		for i, id := range keepIDs {
+			ids[i] = id
+		}
+		b.WhereNotIn(pkCol, ids)
+	}
+	for _, w := range where {
+		w(b)
+	}
+
+	if purge {
+		b.softDeleteCondition = ""
+	}
+
+	return b.DeleteAll(b.dest)
 }
 
 func (b *Builder) Find(dest ...any) (bool, error) {
-	b.applyDefaultCondition()
+	b.applyScope()
 
 	var d any
 	if len(dest) > 0 {
@@ -830,55 +1058,56 @@ func (b *Builder) Find(dest ...any) (bool, error) {
 	}
 
 	if d == nil {
-		return false, errors.New("Find: destination is nil")
+		return false, ErrDestinationNil
 	}
 
 	clone := b.clone()
-	clone.Limit(1)
 
-	val := reflect.ValueOf(d)
-	if val.Kind() == reflect.Ptr {
-		if val.IsNil() {
-			return false, errors.New("model is nil")
+	if clone.rawQuery == "" {
+		clone.Limit(1)
+
+		val := reflect.ValueOf(d)
+		if val.Kind() != reflect.Ptr || val.IsNil() {
+			return false, ErrModelNil
 		}
-		val = val.Elem()
-	}
-	typ := val.Type()
+		valElem := val.Elem()
+		typ := valElem.Type()
 
-	if typ.Kind() == reflect.Slice {
-		typ = typ.Elem()
-		if typ.Kind() == reflect.Ptr {
+		if typ.Kind() == reflect.Slice {
 			typ = typ.Elem()
-		}
-	}
-
-	if typ.Kind() == reflect.Struct {
-		info, err := getStructInfo(typ)
-		if err != nil {
-			return false, fmt.Errorf("Find: %v", err)
-		}
-
-		if len(clone.selects) == 0 {
-			for _, f := range info.fields {
-				clone.Cols(f.name)
+			if typ.Kind() == reflect.Ptr {
+				typ = typ.Elem()
 			}
 		}
 
-		if clone.table == "" {
-			clone.table = SanitizeIdentifier(info.defaultName)
-		}
-	} else {
-		if clone.table == "" {
-			tblName, err := getTableNameFromModel(d)
+		if typ.Kind() == reflect.Struct {
+			info, err := getStructInfo(typ)
 			if err != nil {
 				return false, fmt.Errorf("Find: %v", err)
 			}
-			clone.table = SanitizeIdentifier(tblName)
-		}
-	}
 
-	if clone.table == "" {
-		return false, errors.New("Find: table name is required but empty")
+			if len(clone.selects) == 0 {
+				for _, f := range info.fields {
+					clone.Cols(f.name)
+				}
+			}
+
+			if clone.table == "" {
+				clone.table = SanitizeIdentifier(info.defaultName)
+			}
+		} else {
+			if clone.table == "" {
+				tblName, err := getTableNameFromModel(d)
+				if err != nil {
+					return false, fmt.Errorf("Find: %v", err)
+				}
+				clone.table = SanitizeIdentifier(tblName)
+			}
+		}
+
+		if clone.table == "" {
+			return false, ErrTableRequired
+		}
 	}
 
 	query, args := clone.Build()
@@ -893,8 +1122,19 @@ func (b *Builder) Find(dest ...any) (bool, error) {
 	return true, nil
 }
 
+func (b *Builder) FindOrFail(dest ...any) error {
+	found, err := b.Find(dest...)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return notFoundErr()
+	}
+	return nil
+}
+
 func (b *Builder) FindAll(dest ...any) error {
-	b.applyDefaultCondition()
+	b.applyScope()
 
 	var d any
 	if len(dest) > 0 {
@@ -904,46 +1144,48 @@ func (b *Builder) FindAll(dest ...any) error {
 	}
 
 	if d == nil {
-		return errors.New("FindAll: destination is nil")
+		return ErrDestinationNil
 	}
 
 	clone := b.clone()
 
-	sliceVal := reflect.ValueOf(d)
-	if sliceVal.Kind() != reflect.Ptr || sliceVal.Elem().Kind() != reflect.Slice {
-		if clone.table == "" {
-			tblName, err := getTableNameFromModel(d)
-			if err != nil {
-				return fmt.Errorf("FindAll: %v", err)
+	if clone.rawQuery == "" {
+		sliceVal := reflect.ValueOf(d)
+		if sliceVal.Kind() != reflect.Ptr || sliceVal.Elem().Kind() != reflect.Slice {
+			if clone.table == "" {
+				tblName, err := getTableNameFromModel(d)
+				if err != nil {
+					return fmt.Errorf("FindAll: %v", err)
+				}
+				clone.table = SanitizeIdentifier(tblName)
 			}
-			clone.table = SanitizeIdentifier(tblName)
-		}
-	} else {
-		typ := sliceVal.Elem().Type().Elem()
-		if typ.Kind() == reflect.Ptr {
-			typ = typ.Elem()
-		}
-
-		if typ.Kind() == reflect.Struct {
-			info, err := getStructInfo(typ)
-			if err != nil {
-				return fmt.Errorf("FindAll: %v", err)
+		} else {
+			typ := sliceVal.Elem().Type().Elem()
+			if typ.Kind() == reflect.Ptr {
+				typ = typ.Elem()
 			}
 
-			if len(clone.selects) == 0 {
-				for _, f := range info.fields {
-					clone.Cols(f.name)
+			if typ.Kind() == reflect.Struct {
+				info, err := getStructInfo(typ)
+				if err != nil {
+					return fmt.Errorf("FindAll: %v", err)
+				}
+
+				if len(clone.selects) == 0 {
+					for _, f := range info.fields {
+						clone.Cols(f.name)
+					}
+				}
+
+				if clone.table == "" {
+					clone.table = SanitizeIdentifier(info.defaultName)
 				}
 			}
-
-			if clone.table == "" {
-				clone.table = SanitizeIdentifier(info.defaultName)
-			}
 		}
-	}
 
-	if clone.table == "" {
-		return errors.New("FindAll: table name is required")
+		if clone.table == "" {
+			return ErrTableRequired
+		}
 	}
 
 	query, args := clone.Build()
@@ -951,14 +1193,14 @@ func (b *Builder) FindAll(dest ...any) error {
 }
 
 func (b *Builder) Count() (int64, error) {
-	b.applyDefaultCondition()
+	b.applyScope()
 
 	clone := b.clone()
 	clone.selects = nil
 	clone.Cols("COUNT(*)")
 
 	if clone.table == "" {
-		return 0, errors.New("Count: table name is required")
+		return 0, ErrTableRequired
 	}
 
 	query, args := clone.Build()
@@ -968,7 +1210,7 @@ func (b *Builder) Count() (int64, error) {
 }
 
 func (b *Builder) Exist() (bool, error) {
-	b.applyDefaultCondition()
+	b.applyScope()
 
 	clone := b.clone()
 	clone.selects = nil
@@ -976,7 +1218,7 @@ func (b *Builder) Exist() (bool, error) {
 	clone.Limit(1)
 
 	if clone.table == "" {
-		return false, errors.New("Exist: table name is required")
+		return false, ErrTableRequired
 	}
 
 	query, args := clone.Build()
@@ -1151,6 +1393,10 @@ func (b *Builder) buildSelect(sql *strings.Builder) {
 	if b.offset != nil {
 		sql.WriteString(" OFFSET ?")
 		b.args = append(b.args, *b.offset)
+	}
+
+	if b.lockForUpdate {
+		sql.WriteString(" FOR UPDATE")
 	}
 }
 

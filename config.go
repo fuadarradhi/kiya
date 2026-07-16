@@ -12,7 +12,7 @@ const (
 	SessionStoreRedis  = "redis"
 )
 
-type DefaultConditionFunc func(fields []string, res *Resources) map[string]any
+type ScopeFunc func(fields []string, c *Context) map[string]any
 
 type Config struct {
 	Debug             bool
@@ -29,6 +29,8 @@ type Config struct {
 	CORS              CORSConfig
 	Compression       CompressionConfig
 	HealthCheck       HealthCheckConfig
+
+	CurrentUserFunc func(*Context) (id any, name string)
 }
 
 func (c Config) Validate() error {
@@ -91,18 +93,18 @@ type RedisConfig struct {
 }
 
 type DatabaseConfig struct {
-	Enabled          bool
-	Driver           string
-	Host             string
-	Port             string
-	User             string
-	Password         string
-	Name             string
-	MaxOpenConns     int
-	MaxIdleConns     int
-	ConnMaxLifetime  time.Duration
-	Timezone         string
-	DefaultCondition DefaultConditionFunc
+	Enabled         bool
+	Driver          string
+	Host            string
+	Port            string
+	User            string
+	Password        string
+	Name            string
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	Timezone        string
+	Scope           ScopeFunc
 }
 
 type ViewConfig struct {
