@@ -43,6 +43,12 @@ type Validator struct {
 	pkVal any
 
 	boundVal any
+
+	isRows       bool
+	rowsSliceVal reflect.Value
+	rowsElemType reflect.Type
+	rowsPrefix   string
+	rowsPivotIdx []int
 }
 
 func init() {
@@ -128,8 +134,14 @@ func (v *Validator) Bind(form any, bind ...bool) *Validator {
 
 	v.pkCol = ""
 	v.pkVal = nil
+	v.isRows = false
 
-	if v.uniqueTable == "" {
+	if val.Kind() == reflect.Slice {
+		v.bindRows(val)
+		return v
+	}
+
+	if v.uniqueTable == "" && val.Kind() == reflect.Struct {
 		if val.CanAddr() {
 			if tn, ok := val.Addr().Interface().(interface{ TableName() string }); ok {
 				v.uniqueTable = tn.TableName()
@@ -181,6 +193,38 @@ func (v *Validator) Bind(form any, bind ...bool) *Validator {
 	}
 
 	return v
+}
+
+func (v *Validator) bindRows(sliceVal reflect.Value) {
+	v.isRows = true
+	v.rowsSliceVal = sliceVal
+	v.rowsPrefix = ""
+	v.rowsPivotIdx = nil
+
+	elemType := sliceVal.Type().Elem()
+	if elemType.Kind() != reflect.Struct {
+		v.globalErrors = append(v.globalErrors, fmt.Errorf(
+			"kiya: rows validation requires a slice of structs, got %s", sliceVal.Type()))
+		return
+	}
+	v.rowsElemType = elemType
+
+	proto := reflect.New(elemType).Interface()
+	if p, ok := proto.(prefixer); ok {
+		v.rowsPrefix = p.Prefix()
+	}
+
+	for i := 0; i < elemType.NumField(); i++ {
+		if elemType.Field(i).Tag.Get("pivot") == "true" {
+			v.rowsPivotIdx = append(v.rowsPivotIdx, i)
+		}
+	}
+
+	if len(v.rowsPivotIdx) == 0 {
+		v.globalErrors = append(v.globalErrors, fmt.Errorf(
+			"kiya: rows validation on %s requires at least one field tagged `pivot:\"true\"` to detect empty rows",
+			elemType.Name()))
+	}
 }
 
 func valUnique(v *Validator, param string) RulesFunc {
@@ -337,6 +381,10 @@ func (v *Validator) Validate() error {
 		return ErrValidationFailed
 	}
 
+	if v.isRows {
+		return v.validateRows()
+	}
+
 	for field, rulesMap := range v.parsedRules {
 		val := v.values[field]
 
@@ -364,6 +412,48 @@ func (v *Validator) Validate() error {
 			}
 		}
 	}
+
+	if len(v.validateErrors) > 0 {
+		return ErrValidationFailed
+	}
+
+	return nil
+}
+
+func (v *Validator) validateRows() error {
+	compacted := reflect.MakeSlice(v.rowsSliceVal.Type(), 0, v.rowsSliceVal.Len())
+
+	for i := 0; i < v.rowsSliceVal.Len(); i++ {
+		rowVal := v.rowsSliceVal.Index(i)
+
+		empty := true
+		for _, idx := range v.rowsPivotIdx {
+			if !isEmpty(rowVal.Field(idx).Interface()) {
+				empty = false
+				break
+			}
+		}
+		if empty {
+			continue
+		}
+
+		subV := &Validator{c: v.c}
+		subV.Bind(rowVal.Addr().Interface(), false)
+
+		if err := subV.Validate(); err != nil {
+			for field, msgs := range subV.validateErrors {
+				key := fmt.Sprintf("%s%s_%d", v.rowsPrefix, field, i)
+				for _, msg := range msgs {
+					v.addError(key, msg)
+				}
+			}
+			continue
+		}
+
+		compacted = reflect.Append(compacted, rowVal)
+	}
+
+	v.rowsSliceVal.Set(compacted)
 
 	if len(v.validateErrors) > 0 {
 		return ErrValidationFailed
