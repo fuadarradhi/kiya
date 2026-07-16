@@ -365,7 +365,7 @@ func (c *Context) Bind(v any) error {
 }
 
 func (c *Context) Validator(val any, bind ...bool) *Validator {
-	v := &Validator{c: c}
+	v := &Validator{ctx: c}
 	if val != nil {
 		v.Bind(val, bind...)
 	}

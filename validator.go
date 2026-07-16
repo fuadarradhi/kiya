@@ -31,7 +31,7 @@ type prefixer interface{ Prefix() string }
 type suffixer interface{ Suffix() string }
 
 type Validator struct {
-	c              *Context
+	ctx            *Context
 	globalErrors   []error
 	values         Map
 	validateErrors map[string][]string
@@ -108,7 +108,7 @@ func (v *Validator) Bind(form any, bind ...bool) *Validator {
 	}
 
 	if shouldBind {
-		if err := v.c.Bind(form); err != nil {
+		if err := v.ctx.Bind(form); err != nil {
 			v.globalErrors = append(v.globalErrors, err)
 		}
 	}
@@ -237,14 +237,14 @@ func valUnique(v *Validator, param string) RulesFunc {
 			return fmt.Errorf("invalid column name: %s", param)
 		}
 
-		if v.c.Database() == nil {
+		if v.ctx.Database() == nil {
 			return errors.New("database not available")
 		}
 
 		var found bool
 		var err error
 
-		builder := v.c.Database().Table(v.uniqueTable).Where("deleted_at IS NULL")
+		builder := v.ctx.Database().Table(v.uniqueTable).Where("deleted_at IS NULL")
 
 		if v.pkCol != "" && v.pkVal != nil && !reflect.ValueOf(v.pkVal).IsZero() {
 			if !validColumnNameRegex.MatchString(v.pkCol) {
@@ -437,7 +437,7 @@ func (v *Validator) validateRows() error {
 			continue
 		}
 
-		subV := &Validator{c: v.c}
+		subV := &Validator{ctx: v.ctx}
 		subV.Bind(rowVal.Addr().Interface(), false)
 
 		if err := subV.Validate(); err != nil {
@@ -511,7 +511,7 @@ func (v *Validator) Error(field string, err string) *Validator {
 }
 
 func (v *Validator) Errors() error {
-	v.c.APIResponse(http.StatusUnprocessableEntity,
+	v.ctx.APIResponse(http.StatusUnprocessableEntity,
 		"there are errors in your input, please check and try again",
 		v.validateErrors, []string{},
 	)
