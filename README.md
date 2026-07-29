@@ -39,7 +39,7 @@ app, err := kiya.New(
 
 ---
 
-### 2. Berkas `models.go` — Active Record & Query Builder (`BaseModel`)
+### 2. Berkas `models.go` & `history.go` — Active Record & Audit Trail History (`BaseModel`)
 
 Fitur **`BaseModel`** di Kiya membuat struct Go bertindak sebagai ORM Active Record dengan query builder terintegrasi (`.WhereEq()`, `.Find()`, `.Insert()`, `.Update()`, `.Delete()`, `.Purge()`).
 
@@ -48,11 +48,12 @@ Fitur **`BaseModel`** di Kiya membuat struct Go bertindak sebagai ORM Active Rec
 1. **Wajib (Mandatory)**:
    - **`kiya.BaseModel`**: Wajib di-embed di awal struct disertai tag `` `table:"nama_tabel"` ``.
    - **Primary Key**: Wajib ada setidaknya 1 field Primary Key bertipe integer (default pencarian tag `` `db:"id"` `` atau kolom `"id"`).
-2. **Opsional (Optional)**:
+2. **Opsional (Optional & Auto-Feature)**:
+   - **`History`** (`string` dengan `db:"history"`): Jika ada field ini, Kiya **otomatis mencatat Audit Trail History** berformat JSON array (Action: `created`, `modified`, `deleted`, `restored`, beserta delta `changes`, `actor_id`, `actor_name`, dan timestamp `at`). Untuk mematikan pencatatan pada query tertentu, gunakan `.NoHistory()`.
    - **`DeletedAt`** (`*time.Time` / `time.Time`): Jika ada field ini, Kiya **otomatis mengaktifkan fitur Soft Delete**. Pemanggilan `.Delete()` mengeset `deleted_at = NOW()`. Untuk hapus permanen fisik, gunakan `.Purge()`.
    - **`CreatedAt` & `UpdatedAt`**: Otomatis diisi saat `.Insert()` atau `.Update()`.
 
-#### 📝 Contoh Struktur Model Lengkap:
+#### 📝 Contoh Struktur Model Lengkap dengan History:
 ```go
 package models
 
@@ -68,9 +69,10 @@ type Siswa struct {
     NISN        string `db:"nisn" validate:"required"`
     NamaLengkap string `db:"nama_lengkap" validate:"required"`
 
-    CreatedAt time.Time  `db:"created_at"` // Opsional: Auto Timestamp
-    UpdatedAt time.Time  `db:"updated_at"` // Opsional: Auto Timestamp
-    DeletedAt *time.Time `db:"deleted_at"` // Opsional: Auto Soft Delete
+    History   string     `db:"history"`    // Auto Audit Log (created, modified, deleted, actor)
+    CreatedAt time.Time  `db:"created_at"` // Auto Timestamp
+    UpdatedAt time.Time  `db:"updated_at"` // Auto Timestamp
+    DeletedAt *time.Time `db:"deleted_at"` // Auto Soft Delete
 }
 ```
 
