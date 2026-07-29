@@ -1,6 +1,7 @@
 package kiya
 
 import (
+	"io/fs"
 	"net/http"
 	"time"
 )
@@ -128,3 +129,10 @@ func WithTimeouts(read, write, idle time.Duration) Option {
 		c.Server.IdleTimeout = idle
 	}
 }
+
+func WithViews(viewFS fs.FS) Option {
+	return func(c *config) {
+		c.View.FS = viewFS
+	}
+}
+
