@@ -43,20 +43,24 @@ app, err := kiya.New(
 
 Fitur **`BaseModel`** di Kiya membuat struct Go bertindak sebagai ORM Active Record dengan query builder terintegrasi (`.WhereEq()`, `.Find()`, `.Insert()`, `.Update()`, `.Delete()`, `.Purge()`).
 
-#### 📋 Aturan Field pada `BaseModel`:
+#### 📋 Aturan Field Standar pada `BaseModel` & Tabel Database:
 
-1. **Wajib (Mandatory)**:
-   - **`kiya.BaseModel`**: Wajib di-embed di awal struct disertai tag `` `table:"nama_tabel"` ``.
-   - **Primary Key**: Wajib ada setidaknya 1 field Primary Key bertipe integer (default pencarian tag `` `db:"id"` `` atau kolom `"id"`).
-2. **Opsional (Optional & Auto-Feature)**:
-   - **`CreatedBy`** (`string` dengan `db:"created_by"`): Otomatis terisi nama/ID actor saat `.Insert()`.
-   - **`ModifiedBy`** (`string` dengan `db:"modified_by"`): Otomatis terisi nama/ID actor saat `.Update()`.
-   - **`DeletedBy`** (`string` dengan `db:"deleted_by"`): Otomatis terisi nama/ID actor saat `.Delete()`.
-   - **`History`** (`string` dengan `db:"history"`): Otomatis mencatat Audit Trail History berformat JSON array (`created`, `modified`, `deleted`, `restored`, delta `changes`, `actor_id`, `actor_name`, timestamp `at`). Gunakan `.NoHistory()` untuk mematikan per query.
-   - **`DeletedAt`** (`*time.Time` / `time.Time`): Otomatis mengaktifkan Soft Delete saat `.Delete()`.
-   - **`CreatedAt` & `UpdatedAt`**: Otomatis terisi timestamp saat `.Insert()` atau `.Update()`.
+Secara standar, setiap model database **WAJIB memuat seluruh field audit & lifecycle berikut** (kecuali secara eksplisit disebutkan tidak perlu):
 
-#### 📝 Contoh Struktur Model Lengkap dengan Actor Audit & Soft Delete:
+| Field Go | Tag Struct | Tipe Data SQL | Peran / Fitur Otomatis Kiya |
+| :--- | :--- | :--- | :--- |
+| `kiya.BaseModel` | `table:"nama_tabel"` | - | **WAJIB**: Embedding BaseModel + Tag Nama Tabel |
+| `ID` | `db:"id"` | `BIGINT PRIMARY KEY` | **WAJIB**: Primary Key Integer |
+| `CreatedAt` | `db:"created_at"` | `TIMESTAMP` | Auto Timestamp pembuatan baris |
+| `CreatedBy` | `db:"created_by"` | `VARCHAR(100)` | Auto Actor name/ID saat `.Insert()` |
+| `UpdatedAt` | `db:"updated_at"` | `TIMESTAMP` | Auto Timestamp update terakhir |
+| `ModifiedBy` | `db:"modified_by"` | `VARCHAR(100)` | Auto Actor name/ID saat `.Update()` |
+| `DeletedAt` | `db:"deleted_at"` | `TIMESTAMP NULL` | Auto Soft Delete saat `.Delete()` |
+| `DeletedBy` | `db:"deleted_by"` | `VARCHAR(100)` | Auto Actor name/ID saat `.Delete()` |
+| `-` | `db:"active"` | `VIRTUAL GENERATED` | Helper Unique Constraint (`CASE WHEN deleted_at IS NULL THEN 1 ELSE NULL END`) |
+| `History` | `db:"history"` | `TEXT / JSON` | Auto Audit Trail Log JSON Array (`created`, `modified`, `deleted`, `restored`, delta `changes`) |
+
+#### 📝 Contoh Struktur Model Standar Lengkap:
 ```go
 package models
 
@@ -73,10 +77,10 @@ type Siswa struct {
     NamaLengkap string `db:"nama_lengkap" validate:"required"`
 
     // Field Audit Actor & History (Otomatis Diisi Kiya)
-    CreatedBy string `db:"created_by"` // Auto actor name saat Insert
+    CreatedBy  string `db:"created_by"`  // Auto actor name saat Insert
     ModifiedBy string `db:"modified_by"` // Auto actor name saat Update
-    DeletedBy string `db:"deleted_by"` // Auto actor name saat Delete
-    History   string `db:"history"`    // Auto Audit Trail JSON Array
+    DeletedBy  string `db:"deleted_by"`  // Auto actor name saat Delete
+    History    string `db:"history"`     // Auto Audit Trail JSON Array
 
     // Timestamps & Soft Delete
     CreatedAt time.Time  `db:"created_at"` // Auto Timestamp
