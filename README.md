@@ -49,11 +49,14 @@ Fitur **`BaseModel`** di Kiya membuat struct Go bertindak sebagai ORM Active Rec
    - **`kiya.BaseModel`**: Wajib di-embed di awal struct disertai tag `` `table:"nama_tabel"` ``.
    - **Primary Key**: Wajib ada setidaknya 1 field Primary Key bertipe integer (default pencarian tag `` `db:"id"` `` atau kolom `"id"`).
 2. **Opsional (Optional & Auto-Feature)**:
-   - **`History`** (`string` dengan `db:"history"`): Jika ada field ini, Kiya **otomatis mencatat Audit Trail History** berformat JSON array (Action: `created`, `modified`, `deleted`, `restored`, beserta delta `changes`, `actor_id`, `actor_name`, dan timestamp `at`). Untuk mematikan pencatatan pada query tertentu, gunakan `.NoHistory()`.
-   - **`DeletedAt`** (`*time.Time` / `time.Time`): Jika ada field ini, Kiya **otomatis mengaktifkan fitur Soft Delete**. Pemanggilan `.Delete()` mengeset `deleted_at = NOW()`. Untuk hapus permanen fisik, gunakan `.Purge()`.
-   - **`CreatedAt` & `UpdatedAt`**: Otomatis diisi saat `.Insert()` atau `.Update()`.
+   - **`CreatedBy`** (`string` dengan `db:"created_by"`): Otomatis terisi nama/ID actor saat `.Insert()`.
+   - **`ModifiedBy`** (`string` dengan `db:"modified_by"`): Otomatis terisi nama/ID actor saat `.Update()`.
+   - **`DeletedBy`** (`string` dengan `db:"deleted_by"`): Otomatis terisi nama/ID actor saat `.Delete()`.
+   - **`History`** (`string` dengan `db:"history"`): Otomatis mencatat Audit Trail History berformat JSON array (`created`, `modified`, `deleted`, `restored`, delta `changes`, `actor_id`, `actor_name`, timestamp `at`). Gunakan `.NoHistory()` untuk mematikan per query.
+   - **`DeletedAt`** (`*time.Time` / `time.Time`): Otomatis mengaktifkan Soft Delete saat `.Delete()`.
+   - **`CreatedAt` & `UpdatedAt`**: Otomatis terisi timestamp saat `.Insert()` atau `.Update()`.
 
-#### 📝 Contoh Struktur Model Lengkap dengan History:
+#### 📝 Contoh Struktur Model Lengkap dengan Actor Audit & Soft Delete:
 ```go
 package models
 
@@ -69,7 +72,13 @@ type Siswa struct {
     NISN        string `db:"nisn" validate:"required"`
     NamaLengkap string `db:"nama_lengkap" validate:"required"`
 
-    History   string     `db:"history"`    // Auto Audit Log (created, modified, deleted, actor)
+    // Field Audit Actor & History (Otomatis Diisi Kiya)
+    CreatedBy string `db:"created_by"` // Auto actor name saat Insert
+    ModifiedBy string `db:"modified_by"` // Auto actor name saat Update
+    DeletedBy string `db:"deleted_by"` // Auto actor name saat Delete
+    History   string `db:"history"`    // Auto Audit Trail JSON Array
+
+    // Timestamps & Soft Delete
     CreatedAt time.Time  `db:"created_at"` // Auto Timestamp
     UpdatedAt time.Time  `db:"updated_at"` // Auto Timestamp
     DeletedAt *time.Time `db:"deleted_at"` // Auto Soft Delete
