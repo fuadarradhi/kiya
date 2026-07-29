@@ -4,7 +4,7 @@ Framework web Go yang aman, cepat, dan modular dengan fitur keamanan enterprise 
 
 ---
 
-## 📚 Dokumentasi Berkas Framework
+## 📚 Dokumentasi Berkas Framework & Cara Penggunaan
 
 ### 1. `kiya.go` — Entrypoint & Engine Constructor
 
@@ -26,12 +26,65 @@ Berkas **`kiya.go`** adalah pusat pengatur (*core constructor*) utama dari frame
 | **Auto Health Check** | `/health` | Endpoint otomatis untuk monitoring kondisi server & database ping. |
 | **Prometheus Metrics** | `/metrics` | Endpoint publikasi statistik performa server format Prometheus. |
 
-#### 💡 Cara Penggunaan `kiya.New()`:
+#### 💡 Cara Inisialisasi Engine:
 ```go
 app, err := kiya.New(
     kiya.WithAddr("0.0.0.0", 8080),
     kiya.WithDebug(true),
     kiya.WithCORS("*"),
     kiya.WithViews(views.FS),
+    kiya.WithEncryption("secret-key-32-bytes"),
 )
+```
+
+---
+
+### 2. Panduan Penggunaan Fitur Framework (`Context`)
+
+#### A. AES-256 URL ID Encryption & Decryption (`c.EncryptID` & `c.DecryptID`)
+Mencegah ID berurutan (*ID Enumeration/Scraping Attack*) dengan enkripsi otomatis pada query URL `?id=...` atau param path.
+```go
+// Mengenkripsi ID int64 -> URL Safe Encrypted String
+encryptedString, err := c.EncryptID(42)
+
+// Otomatis membaca ?id= dari URL, mendekripsi, dan mengembalikan int64
+id, err := c.DecryptID()
+if err != nil {
+    return c.APIResponse(400, "ID tidak valid", nil, nil)
+}
+// id = 42 (int64)
+```
+
+#### B. Struct Payload Validation (`c.Validator`)
+Memvalidasi payload masukan menggunakan struct tag (`validate:"required,email,minlength=6"`).
+```go
+type LoginRequest struct {
+    Email    string `json:"email" validate:"required,email"`
+    Password string `json:"password" validate:"required"`
+}
+
+func LoginHandler(c *kiya.Context) error {
+    var req LoginRequest
+    if err := c.BindJSON(&req); err != nil {
+        return c.APIResponse(400, "Payload JSON tidak valid", nil, nil)
+    }
+
+    v := c.Validator(&req)
+    if err := v.Validate(); err != nil {
+        // v.Errors() otomatis mengembalikan HTTP 422 Unprocessable Entity + Map Error per Field
+        return v.Errors()
+    }
+
+    return c.APIResponse(200, "Login Berhasil", nil, req)
+}
+```
+
+#### C. Render HTML Template Pongo2 (`c.Render`)
+Memerintahkan renderer Pongo2 untuk merender berkas HTML yang ter-embed di `views.FS`.
+```go
+func HomeHandler(c *kiya.Context) error {
+    return c.Render(200, "site/home.html", kiya.Map{
+        "title": "Halaman Utama",
+    })
+}
 ```
