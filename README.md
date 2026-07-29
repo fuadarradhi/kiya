@@ -39,24 +39,55 @@ app, err := kiya.New(
 
 ---
 
-### 2. Panduan Penggunaan Fitur Framework (`Context`)
+### 2. Berkas `models.go` — Active Record & Query Builder (`BaseModel`)
+
+Fitur **`BaseModel`** di Kiya membuat struct Go bertindak sebagai ORM Active Record dengan query builder terintegrasi (`.WhereEq()`, `.Find()`, `.Insert()`, `.Update()`, `.Delete()`, `.Purge()`).
+
+#### 📋 Aturan Field pada `BaseModel`:
+
+1. **Wajib (Mandatory)**:
+   - **`kiya.BaseModel`**: Wajib di-embed di awal struct disertai tag `` `table:"nama_tabel"` ``.
+   - **Primary Key**: Wajib ada setidaknya 1 field Primary Key bertipe integer (default pencarian tag `` `db:"id"` `` atau kolom `"id"`).
+2. **Opsional (Optional)**:
+   - **`DeletedAt`** (`*time.Time` / `time.Time`): Jika ada field ini, Kiya **otomatis mengaktifkan fitur Soft Delete**. Pemanggilan `.Delete()` mengeset `deleted_at = NOW()`. Untuk hapus permanen fisik, gunakan `.Purge()`.
+   - **`CreatedAt` & `UpdatedAt`**: Otomatis diisi saat `.Insert()` atau `.Update()`.
+
+#### 📝 Contoh Struktur Model Lengkap:
+```go
+package models
+
+import (
+    "time"
+    "github.com/fuadarradhi/kiya"
+)
+
+type Siswa struct {
+    kiya.BaseModel `table:"siswa"` // WAJIB 1: Embed BaseModel + Tag Table
+
+    ID          int64  `db:"id"`   // WAJIB 2: Primary Key Integer
+    NISN        string `db:"nisn" validate:"required"`
+    NamaLengkap string `db:"nama_lengkap" validate:"required"`
+
+    CreatedAt time.Time  `db:"created_at"` // Opsional: Auto Timestamp
+    UpdatedAt time.Time  `db:"updated_at"` // Opsional: Auto Timestamp
+    DeletedAt *time.Time `db:"deleted_at"` // Opsional: Auto Soft Delete
+}
+```
+
+---
+
+### 3. Panduan Penggunaan Fitur Framework (`Context`)
 
 #### A. AES-256 URL ID Encryption & Decryption (`c.EncryptID` & `c.DecryptID`)
-Mencegah ID berurutan (*ID Enumeration/Scraping Attack*) dengan enkripsi otomatis pada query URL `?id=...` atau param path.
 ```go
 // Mengenkripsi ID int64 -> URL Safe Encrypted String
 encryptedString, err := c.EncryptID(42)
 
 // Otomatis membaca ?id= dari URL, mendekripsi, dan mengembalikan int64
 id, err := c.DecryptID()
-if err != nil {
-    return c.APIResponse(400, "ID tidak valid", nil, nil)
-}
-// id = 42 (int64)
 ```
 
 #### B. Struct Payload Validation (`c.Validator`)
-Memvalidasi payload masukan menggunakan struct tag (`validate:"required,email,minlength=6"`).
 ```go
 type LoginRequest struct {
     Email    string `json:"email" validate:"required,email"`
@@ -71,7 +102,6 @@ func LoginHandler(c *kiya.Context) error {
 
     v := c.Validator(&req)
     if err := v.Validate(); err != nil {
-        // v.Errors() otomatis mengembalikan HTTP 422 Unprocessable Entity + Map Error per Field
         return v.Errors()
     }
 
@@ -80,7 +110,6 @@ func LoginHandler(c *kiya.Context) error {
 ```
 
 #### C. Render HTML Template Pongo2 (`c.Render`)
-Memerintahkan renderer Pongo2 untuk merender berkas HTML yang ter-embed di `views.FS`.
 ```go
 func HomeHandler(c *kiya.Context) error {
     return c.Render(200, "site/home.html", kiya.Map{
