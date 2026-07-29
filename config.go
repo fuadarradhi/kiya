@@ -41,9 +41,6 @@ type config struct {
 
 func (c config) validate() error {
 	if c.Server.SessionEnabled {
-		if c.Server.SessionSecret == "" {
-			return errors.New("session secret cannot be empty when sessions are enabled — use kiya.WithSession(...) or kiya.WithSessionRedis(...)")
-		}
 		if c.Server.SessionStore.Type == SessionStoreRedis {
 			if c.Server.SessionStore.Redis.Addr == "" {
 				return errors.New("redis address cannot be empty when using redis session store")
@@ -89,6 +86,9 @@ type ServerConfig struct {
 	TrustProxyHeaders bool
 	CSRFEnabled       bool
 	CSRFExemptPaths   []string
+	HoneypotEnabled   bool
+	HoneypotFieldName string
+	HoneypotExemptPaths []string
 	SameSite          string
 }
 

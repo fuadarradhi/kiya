@@ -60,6 +60,10 @@ type Router struct {
 	csrfEnabled     bool
 	csrfExemptPaths []string
 
+	honeypotEnabled     bool
+	honeypotFieldName   string
+	honeypotExemptPaths []string
+
 	csp            string
 	cspExemptPaths []string
 	wafExemptPaths []string
@@ -134,6 +138,10 @@ func (r *Router) clone() *Router {
 
 		csrfEnabled:     r.csrfEnabled,
 		csrfExemptPaths: r.csrfExemptPaths,
+
+		honeypotEnabled:     r.honeypotEnabled,
+		honeypotFieldName:   r.honeypotFieldName,
+		honeypotExemptPaths: r.honeypotExemptPaths,
 
 		csp:            r.csp,
 		cspExemptPaths: r.cspExemptPaths,
@@ -233,6 +241,10 @@ func generateRequestID() string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	return fmt.Sprintf("%x", b)
+}
+
+func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.createRootHandler().ServeHTTP(w, req)
 }
 
 func (r *Router) createRootHandler() http.Handler {
@@ -375,6 +387,8 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	res.reset(w, req, r.renderer)
 	res.encryptKey = r.encryptKey
 	res.csrfEnabled = r.csrfEnabled
+	res.honeypotEnabled = r.honeypotEnabled
+	res.honeypotFieldName = r.honeypotFieldName
 	res.currentUserFunc = r.currentUserFunc
 
 	defer func() {
@@ -447,6 +461,38 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 				err := &HTTPError{
 					Code:    http.StatusForbidden,
 					Message: "Invalid or expired CSRF token",
+				}
+				r.handleError(res, err)
+				return
+			}
+		}
+	}
+
+	if r.honeypotEnabled && req.Method != http.MethodGet && req.Method != http.MethodHead && req.Method != http.MethodOptions {
+		isExempt := false
+		for _, p := range r.honeypotExemptPaths {
+			if strings.HasPrefix(req.URL.Path, p) {
+				isExempt = true
+				break
+			}
+		}
+
+		if !isExempt {
+			hpVal := req.Header.Get("X-Honeypot-Token")
+			if hpVal == "" {
+				ct := req.Header.Get("Content-Type")
+				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || strings.HasPrefix(ct, "multipart/form-data") {
+					if err := req.ParseForm(); err == nil {
+						hpVal = req.FormValue(r.honeypotFieldName)
+					}
+				}
+			}
+
+			if hpVal != "" {
+				logger.LogWarn("Honeypot bot detected on %s %s (field '%s' filled with '%s')", req.Method, req.URL.Path, r.honeypotFieldName, hpVal)
+				err := &HTTPError{
+					Code:    http.StatusBadRequest,
+					Message: "Spam submission detected",
 				}
 				r.handleError(res, err)
 				return

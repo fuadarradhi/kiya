@@ -23,11 +23,13 @@ func WithForceHTTPS() Option {
 	return func(c *config) { c.Server.ForceHTTPS = true }
 }
 
-func WithSession(secret, storeType string) Option {
+func WithSession(secret ...string) Option {
 	return func(c *config) {
 		c.Server.SessionEnabled = true
-		c.Server.SessionSecret = secret
-		c.Server.SessionStore.Type = storeType
+		if len(secret) > 0 {
+			c.Server.SessionSecret = secret[0]
+		}
+		c.Server.SessionStore.Type = SessionStoreCookie
 	}
 }
 
@@ -135,4 +137,40 @@ func WithViews(viewFS fs.FS) Option {
 		c.View.FS = viewFS
 	}
 }
+
+func WithCSRF() Option {
+	return func(c *config) {
+		c.Server.CSRFEnabled = true
+	}
+}
+
+func WithoutCSRF(exemptPaths ...string) Option {
+	return func(c *config) {
+		c.Server.CSRFEnabled = true
+		c.Server.CSRFExemptPaths = append(c.Server.CSRFExemptPaths, exemptPaths...)
+	}
+}
+
+func WithHoneypot(fieldName ...string) Option {
+	return func(c *config) {
+		c.Server.HoneypotEnabled = true
+		name := "honeypot_token"
+		if len(fieldName) > 0 && fieldName[0] != "" {
+			name = fieldName[0]
+		}
+		c.Server.HoneypotFieldName = name
+	}
+}
+
+func WithoutHoneypot(exemptPaths ...string) Option {
+	return func(c *config) {
+		c.Server.HoneypotEnabled = true
+		if c.Server.HoneypotFieldName == "" {
+			c.Server.HoneypotFieldName = "honeypot_token"
+		}
+		c.Server.HoneypotExemptPaths = append(c.Server.HoneypotExemptPaths, exemptPaths...)
+	}
+}
+
+
 

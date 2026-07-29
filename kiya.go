@@ -1,6 +1,7 @@
 package kiya
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"fmt"
 	"net/http"
@@ -82,6 +83,10 @@ func New(opts ...Option) (*Router, error) {
 		csrfEnabled:     cfg.Server.CSRFEnabled,
 		csrfExemptPaths: cfg.Server.CSRFExemptPaths,
 
+		honeypotEnabled:     cfg.Server.HoneypotEnabled,
+		honeypotFieldName:   cfg.Server.HoneypotFieldName,
+		honeypotExemptPaths: cfg.Server.HoneypotExemptPaths,
+
 		csp:            cfg.Security.CSP,
 		cspExemptPaths: cfg.Security.CSPExemptPaths,
 		wafExemptPaths: cfg.Security.WAFExemptPaths,
@@ -109,6 +114,13 @@ func New(opts ...Option) (*Router, error) {
 	}
 
 	if cfg.Server.SessionEnabled {
+		if cfg.Server.SessionSecret == "" {
+			b := make([]byte, 16)
+			rand.Read(b)
+			cfg.Server.SessionSecret = fmt.Sprintf("%x", b)
+			logger.LogWarn("Session secret is empty — generated temporary random key. Sessions will reset on server restart.")
+		}
+
 		sessionMaxAge := cfg.Server.SessionMaxAge
 		if sessionMaxAge <= 0 {
 			sessionMaxAge = 86400 * 7
@@ -270,6 +282,12 @@ func New(opts ...Option) (*Router, error) {
 		logger.LogInfo("CSRF protection enabled (encrypt-time session-bound, 2h validity)")
 	} else {
 		logger.LogInfo("CSRF protection disabled")
+	}
+
+	if r.honeypotEnabled {
+		logger.LogInfo("Honeypot protection enabled (field: '%s')", r.honeypotFieldName)
+	} else {
+		logger.LogInfo("Honeypot protection disabled")
 	}
 
 	if cfg.HealthCheck.Enabled {

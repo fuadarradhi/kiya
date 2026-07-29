@@ -1,0 +1,4 @@
+# Log and temp files
+temp/
+*.test
+*.out

@@ -39,9 +39,11 @@ type Context struct {
 	written         bool
 	aborted         bool
 	body            []byte
-	encryptKey      []byte
-	csrfEnabled     bool
-	currentUserFunc func(*Context) (any, string)
+	encryptKey        []byte
+	csrfEnabled       bool
+	honeypotEnabled   bool
+	honeypotFieldName string
+	currentUserFunc   func(*Context) (any, string)
 }
 
 func (c *Context) Response() http.ResponseWriter { return c.response }
@@ -61,6 +63,8 @@ func (c *Context) reset(w http.ResponseWriter, req *http.Request, renderer *web.
 	c.body = nil
 	c.encryptKey = nil
 	c.csrfEnabled = false
+	c.honeypotEnabled = false
+	c.honeypotFieldName = ""
 	c.currentUserFunc = nil
 
 	if c.locals == nil {
@@ -245,6 +249,10 @@ func (c *Context) renderHTML(code int, name string, data ...Map) error {
 	if csrfToken != "" {
 		htmlStr = web.InjectCSRFIntoForms(htmlStr, csrfToken)
 		htmlStr = web.InjectCSRFMeta(htmlStr, csrfToken)
+	}
+
+	if c.honeypotEnabled && c.honeypotFieldName != "" {
+		htmlStr = web.InjectHoneypotIntoForms(htmlStr, c.honeypotFieldName)
 	}
 
 	c.response.Header().Set("Content-Type", "text/html; charset=utf-8")

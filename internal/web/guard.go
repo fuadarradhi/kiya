@@ -66,3 +66,36 @@ func InjectCSRFMeta(html string, token string) string {
 		return match + meta
 	})
 }
+
+func InjectHoneypotIntoForms(html string, fieldName string) string {
+	if fieldName == "" {
+		return html
+	}
+
+	if strings.Contains(html, fmt.Sprintf(`name="%s"`, fieldName)) ||
+		strings.Contains(html, fmt.Sprintf(`name='%s'`, fieldName)) {
+		return html
+	}
+
+	escapedFieldName := util.HTMLEscape(fieldName)
+	hpInput := fmt.Sprintf(
+		`<input type="text" name="%s" value="" style="display:none !important; position:absolute !important; left:-9999px !important;" tabindex="-1" autocomplete="off" aria-hidden="true">`,
+		escapedFieldName,
+	)
+
+	return reFormTag.ReplaceAllStringFunc(html, func(match string) string {
+		methodMatches := reMethodAttr.FindStringSubmatch(match)
+
+		method := "GET"
+		if len(methodMatches) >= 2 && methodMatches[1] != "" {
+			method = strings.ToUpper(methodMatches[1])
+		}
+
+		if method == "GET" {
+			return match
+		}
+
+		return match + hpInput
+	})
+}
+

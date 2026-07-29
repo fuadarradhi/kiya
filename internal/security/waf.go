@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
@@ -18,6 +19,15 @@ import (
 	"github.com/fuadarradhi/kiya/internal/util"
 	"github.com/fuadarradhi/kiya/owasp"
 )
+
+type slashFS struct {
+	fsys fs.FS
+}
+
+func (s slashFS) Open(name string) (fs.File, error) {
+	name = strings.ReplaceAll(name, "\\", "/")
+	return s.fsys.Open(name)
+}
 
 const defaultMaxWAFBufferSize int64 = 10 << 20
 
@@ -344,14 +354,24 @@ func InitWAF(debug bool) (coraza.WAF, error) {
 			)
 		})
 
+	var ruleIncludes strings.Builder
+	entries, err := fs.ReadDir(owasp.RulesFS, "rules")
+	if err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".conf") {
+				ruleIncludes.WriteString(fmt.Sprintf("Include rules/%s\n", entry.Name()))
+			}
+		}
+	}
+
 	directives := fmt.Sprintf(`
         SecRuleEngine %s
         Include crs-setup.conf
-        Include rules/*.conf
+        %s
         Include ignore.conf
-    `, engineMode)
+    `, engineMode, ruleIncludes.String())
 
-	cfg = cfg.WithRootFS(owasp.RulesFS)
+	cfg = cfg.WithRootFS(slashFS{fsys: owasp.RulesFS})
 	cfg = cfg.WithDirectives(directives)
 
 	wafInstance, err := coraza.NewWAF(cfg)

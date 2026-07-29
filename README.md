@@ -34,6 +34,8 @@ app, err := kiya.New(
     kiya.WithCORS("*"),
     kiya.WithViews(views.FS),
     kiya.WithEncryption("secret-key-32-bytes"),
+    kiya.WithCSRF(),
+    kiya.WithoutCSRF("/api"), // Pengecualian rute dari CSRF protection
 )
 ```
 
@@ -132,3 +134,40 @@ func HomeHandler(c *kiya.Context) error {
     })
 }
 ```
+
+#### D. Otomatisasi CSRF Injection (`InjectCSRFIntoForms` & `InjectCSRFMeta`)
+Ketika `WithCSRF()` aktif, Kiya secara otomatis melakukan hal berikut pada setiap respon HTML:
+1. **Auto-Inject Input Hidden Form**: Setiap tag `<form method="POST">` (atau PUT/DELETE/PATCH) akan otomatis disisipkan `<input type="hidden" name="csrf_token" value="...">` tanpa perlu menulis tag input manual.
+2. **Auto-Inject Meta Tag Header**: Tag `<head>` akan otomatis disisipkan `<meta name="csrf-token" content="...">` untuk memudahkan request AJAX/Fetch JavaScript.
+3. **Template Variable**: Variabel `csrf_token` juga otomatis tersedia di template Pongo2 (`{{ csrf_token }}`).
+
+#### E. Otomatisasi Anti-Bot Honeypot (`WithHoneypot` & `WithoutHoneypot`)
+Ketika `WithHoneypot()` aktif (secara bawaan menggunakan field name `honeypot_token`):
+1. **Auto-Inject Input Tersembunyi**: Setiap tag `<form method="POST">` (atau PUT/DELETE/PATCH) akan otomatis disisipkan `<input type="text" name="honeypot_token" value="" style="display:none !important;" tabindex="-1" autocomplete="off" aria-hidden="true">`.
+2. **Auto-Detect Spam Bot**: Pengunjung manusia tidak akan melihat maupun mengisi input tersembunyi ini. Jika ada spam bot otomatis yang mengisi field `honeypot_token`, Kiya secara otomatis menolak request tersebut (`400 Bad Request: Spam submission detected`) sebelum masuk ke handler aplikasi.
+3. **Pengecualian Rute**: Gunakan `WithoutHoneypot("/api")` untuk mengecualikan endpoint REST API atau Webhook dari pemeriksaan Honeypot.
+
+
+
+---
+
+### 4. Berkas `router.go` — Routing, Grouping (`Route`), & Trailing Slash Normalization
+
+Kiya Framework memiliki router bawaan yang cepat dengan fitur pencarian berbasis Trie Tree ([internal/router/tree.go](file:///d:/Development/Project/Sinansikula/sinansikula/server/kiya/internal/router/tree.go)).
+
+#### 💡 Fitur Automatic Trailing Slash Normalization:
+Secara internal, Kiya selalu membersihkan path menggunakan `path.Clean()` pada saat **pendaftaran route (`AddRoute`)** maupun **pencarian request (`FindRoute`)**.
+
+Oleh karena itu:
+- URL `/manage` dan `/manage/` secara otomatis di-normalize ke segment yang sama (`["manage"]`).
+- Saat membuat sub-route/grouping via `r.Route("/manage", ...)`, Anda **CUKUP mendaftarkan 1 rute saja** untuk root grup:
+
+```go
+app.Route("/manage", func(r *kiya.Router) {
+    // Cukup mendaftarkan r.Get("", ...) saja.
+    // Jalur /manage maupun /manage/ otomatis dilayani oleh handler ini.
+    r.Get("", manage.DashboardHandler)
+    r.Get("/dashboard", manage.DashboardHandler)
+})
+```
+
