@@ -2,6 +2,20 @@
 
 Framework web Go yang aman, cepat, dan modular dengan fitur keamanan enterprise bawaan (WAF, Rate Limiting, Session Management, Pongo2 View Engine, dan Active Record ORM).
 
+## 🎯 3 Pilar Utama Framework Kiya
+
+1. 🛡️ **Keamanan Maksimal (OWASP Compliance Standard)**:
+   - **WAF Engine (Coraza)** bawaan untuk proteksi otomatis SQLi, XSS, Path Traversal, Command Injection.
+   - **Isolasi Session Scope (`WithSessionResolver`)**: Mengisolasi cookie session per rute/scope.
+   - **Persistent HMAC Browser Cookie (`WithBrowserCookie`)**: Signature HMAC-SHA256 bound ke `User-Agent` untuk mencegah pencurian cookie session.
+   - **Auto Anti-CSRF & Anti-Bot Honeypot**: Penanganan otomatis token CSRF dan jebakan bot spam.
+2. ⚡ **Performa High Concurrency (Ribuan Akses Bersamaan)**:
+   - **Zero-Allocation Context Reuse (`sync.Pool`)**: Mengurangi beban alokasi memori GC secara dramatis pada traffic tinggi.
+   - **Zero-Cron Real-time Aggregation**: Terintegrasi sempurna dengan Database Triggers & Active Record ORM.
+   - **Fast Trie-Tree Routing**: Routing ultra-cepat berbasis Trie Tree dengan auto trailing-slash normalization.
+3. 🎨 **User-Friendly & Developer-Centric**:
+   - API yang bersih, mudah digunakan (*developer-friendly*), serta menghasilkan pengalaman pengguna (*UX*) yang responsif & bersahabat.
+
 ---
 
 ## 📚 Dokumentasi Berkas Framework & Cara Penggunaan
