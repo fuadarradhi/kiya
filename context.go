@@ -44,6 +44,8 @@ type Context struct {
 	honeypotEnabled   bool
 	honeypotFieldName string
 	currentUserFunc   func(*Context) (any, string)
+	browserID         string
+	browserValid      bool
 }
 
 func (c *Context) Response() http.ResponseWriter { return c.response }
@@ -51,6 +53,8 @@ func (c *Context) Request() *http.Request        { return c.request }
 func (c *Context) Session() *Session             { return c.session }
 func (c *Context) Database() *DB                 { return c.database }
 func (c *Context) Locals() *Locals               { return c.locals }
+func (c *Context) BrowserID() string             { return c.browserID }
+func (c *Context) ValidBrowser() bool            { return c.browserValid }
 
 func (c *Context) reset(w http.ResponseWriter, req *http.Request, renderer *web.Renderer) {
 	c.response = w
@@ -66,6 +70,8 @@ func (c *Context) reset(w http.ResponseWriter, req *http.Request, renderer *web.
 	c.honeypotEnabled = false
 	c.honeypotFieldName = ""
 	c.currentUserFunc = nil
+	c.browserID = ""
+	c.browserValid = false
 
 	if c.locals == nil {
 		c.locals = NewLocals()

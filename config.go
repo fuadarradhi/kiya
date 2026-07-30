@@ -19,6 +19,8 @@ const (
 
 type ScopeFunc func(fields []string, c *Context) map[string]any
 
+type SessionResolverFunc func(r *http.Request) (name string, path string)
+
 type config struct {
 	Debug             bool
 	Telegram          TelegramConfig
@@ -80,6 +82,9 @@ type ServerConfig struct {
 	SessionEnabled    bool
 	SessionMaxAge     int
 	SessionStore      SessionStoreConfig
+	SessionResolver   SessionResolverFunc
+	BrowserCookieEnabled bool
+	BrowserCookieName    string
 	MaxWAFBufferSize  int64
 	ForceHTTPS        bool
 	SecureCookie      bool

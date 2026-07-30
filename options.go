@@ -42,6 +42,23 @@ func WithSessionRedis(secret, addr, password string, db int) Option {
 	}
 }
 
+func WithSessionResolver(fn SessionResolverFunc) Option {
+	return func(c *config) {
+		c.Server.SessionResolver = fn
+	}
+}
+
+func WithBrowserCookie(name ...string) Option {
+	return func(c *config) {
+		c.Server.BrowserCookieEnabled = true
+		cookieName := "browser"
+		if len(name) > 0 && name[0] != "" {
+			cookieName = name[0]
+		}
+		c.Server.BrowserCookieName = cookieName
+	}
+}
+
 func WithDatabase(driver, host, port, user, password, name string) Option {
 	return func(c *config) {
 		c.Database.Enabled = true

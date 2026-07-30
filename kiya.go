@@ -95,7 +95,14 @@ func New(opts ...Option) (*Router, error) {
 		compressionEnabled: cfg.Compression.Enabled,
 		requestIDEnabled:   true,
 
-		currentUserFunc: cfg.CurrentUserFunc,
+		currentUserFunc:      cfg.CurrentUserFunc,
+		sessionResolver:      cfg.Server.SessionResolver,
+		browserCookieEnabled: cfg.Server.BrowserCookieEnabled,
+		browserCookieName:    cfg.Server.BrowserCookieName,
+	}
+
+	if r.browserCookieName == "" {
+		r.browserCookieName = "browser"
 	}
 
 	if cfg.Compression.Enabled {
@@ -111,6 +118,20 @@ func New(opts ...Option) (*Router, error) {
 		logger.LogInfo("Encryption enabled (AES-256-GCM)")
 	} else {
 		logger.LogInfo("Encryption disabled (no key configured)")
+	}
+
+	if cfg.Server.SessionSecret != "" {
+		r.browserSecret = []byte(cfg.Server.SessionSecret)
+	} else if len(r.encryptKey) > 0 {
+		r.browserSecret = r.encryptKey
+	} else {
+		b := make([]byte, 16)
+		rand.Read(b)
+		r.browserSecret = b
+	}
+
+	if r.browserCookieEnabled {
+		logger.LogInfo("Browser tracking cookie enabled (Name: '%s', 30-day HMAC persistence)", r.browserCookieName)
 	}
 
 	if cfg.Server.SessionEnabled {

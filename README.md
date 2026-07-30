@@ -34,9 +34,23 @@ app, err := kiya.New(
     kiya.WithCORS("*"),
     kiya.WithViews(views.FS),
     kiya.WithEncryption("secret-key-32-bytes"),
+    kiya.WithSession("session-secret-key"),
+    // Dynamic Split Session Isolation (misal memisahkan session Admin /manage dan Publik /)
+    kiya.WithSessionResolver(func(r *http.Request) (name string, path string) {
+        if strings.HasPrefix(r.URL.Path, "/manage") {
+            return "app_manage_sess", "/manage"
+        }
+        return "app_site_sess", "/"
+    }),
+    // Persistent Browser Cookie (30 hari, HMAC signature bound ke User-Agent)
+    kiya.WithBrowserCookie("browser"),
     kiya.WithCSRF(),
     kiya.WithoutCSRF("/api"), // Pengecualian rute dari CSRF protection
 )
+
+// Mengakses Browser Tracking di Handler:
+// browserID := c.BrowserID()     -> Menghasilkan string unique browser ID (HMAC-signed)
+// isValid   := c.ValidBrowser()   -> bool: true jika cookie dari browser yang sama (un-tampered & UA cocok)
 ```
 
 ---
@@ -170,4 +184,18 @@ app.Route("/manage", func(r *kiya.Router) {
     r.Get("/dashboard", manage.DashboardHandler)
 })
 ```
+
+---
+
+### ⚡ Live Reload (Development Mode)
+
+- **WSL (Coding di Windows & Menjalankan di WSL)**:
+  ```bash
+  nodemon --legacy-watch . --ext go --exec "go run app/main.go" --signal SIGTERM
+  ```
+
+- **Linux Native**:
+  ```bash
+  reflex -d none -s -R vendor. -r .go$ -- go run app/main.go
+  ```
 

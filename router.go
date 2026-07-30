@@ -2,7 +2,9 @@ package kiya
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -42,8 +44,12 @@ type Router struct {
 	addr         string
 	waf          coraza.WAF
 	database     *DB
-	sessionStore sessions.Store
-	renderer     *web.Renderer
+	sessionStore         sessions.Store
+	sessionResolver      SessionResolverFunc
+	browserCookieEnabled bool
+	browserCookieName    string
+	browserSecret        []byte
+	renderer             *web.Renderer
 
 	rateLimiter      security.RateLimitStore
 	keyFunc          func(r *http.Request, sess *Session) string
@@ -121,8 +127,12 @@ func (r *Router) clone() *Router {
 		addr:         r.addr,
 		waf:          r.waf,
 		database:     r.database,
-		sessionStore: r.sessionStore,
-		renderer:     r.renderer,
+		sessionStore:         r.sessionStore,
+		sessionResolver:      r.sessionResolver,
+		browserCookieEnabled: r.browserCookieEnabled,
+		browserCookieName:    r.browserCookieName,
+		browserSecret:        r.browserSecret,
+		renderer:             r.renderer,
 
 		rateLimiter:      r.rateLimiter,
 		keyFunc:          r.keyFunc,
@@ -405,14 +415,76 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	}()
 
+	if r.browserCookieEnabled {
+		ua := req.UserAgent()
+		if ua == "" {
+			ua = "unknown-ua"
+		}
+
+		computeHMAC := func(salt string) string {
+			mac := hmac.New(sha256.New, r.browserSecret)
+			mac.Write([]byte(salt + ":" + ua))
+			return hex.EncodeToString(mac.Sum(nil))
+		}
+
+		var isValid bool
+		var currentVal string
+
+		if ck, err := req.Cookie(r.browserCookieName); err == nil && ck.Value != "" {
+			parts := strings.Split(ck.Value, ".")
+			if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+				salt := parts[0]
+				expectedSig := computeHMAC(salt)
+				if hmac.Equal([]byte(parts[1]), []byte(expectedSig)) {
+					isValid = true
+					currentVal = ck.Value
+				}
+			}
+		}
+
+		if !isValid {
+			b := make([]byte, 16)
+			rand.Read(b)
+			salt := hex.EncodeToString(b)
+			sig := computeHMAC(salt)
+			currentVal = salt + "." + sig
+		}
+
+		res.browserID = currentVal
+		res.browserValid = isValid
+
+		secureCookie := r.forceHTTPS
+		http.SetCookie(w, &http.Cookie{
+			Name:     r.browserCookieName,
+			Value:    currentVal,
+			Path:     "/",
+			MaxAge:   30 * 86400, // 30 days
+			HttpOnly: true,
+			Secure:   secureCookie,
+			SameSite: r.sameSite,
+		})
+	}
+
 	if r.database != nil {
 		res.database = r.database.WithContext(req.Context())
 	}
 
 	if r.sessionStore != nil {
-		rawSess, err := r.sessionStore.Get(req, "sessions")
+		sessName := "sessions"
+		var sessPath string
+		if r.sessionResolver != nil {
+			if name, path := r.sessionResolver(req); name != "" {
+				sessName = name
+				sessPath = path
+			}
+		}
+
+		rawSess, err := r.sessionStore.Get(req, sessName)
 		if err != nil {
-			rawSess, _ = r.sessionStore.New(req, "sessions")
+			rawSess, _ = r.sessionStore.New(req, sessName)
+		}
+		if sessPath != "" && rawSess.Options != nil {
+			rawSess.Options.Path = sessPath
 		}
 		res.session = NewSession(rawSess, req, w)
 
