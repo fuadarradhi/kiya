@@ -16,7 +16,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/security"
 	"github.com/fuadarradhi/kiya/internal/util"
-	"github.com/fuadarradhi/kiya/internal/web"
 )
 
 func New(opts ...Option) (*Router, error) {
@@ -77,15 +76,7 @@ func New(opts ...Option) (*Router, error) {
 		database:   database,
 		debug:      cfg.Debug,
 		forceHTTPS: cfg.Server.ForceHTTPS,
-		renderer:   web.NewRenderer(cfg.View.FS),
 		sameSite:   sameSite,
-
-		csrfEnabled:     cfg.Server.CSRFEnabled,
-		csrfExemptPaths: cfg.Server.CSRFExemptPaths,
-
-		honeypotEnabled:     cfg.Server.HoneypotEnabled,
-		honeypotFieldName:   cfg.Server.HoneypotFieldName,
-		honeypotExemptPaths: cfg.Server.HoneypotExemptPaths,
 
 		csp:            cfg.Security.CSP,
 		cspExemptPaths: cfg.Security.CSPExemptPaths,
@@ -299,17 +290,7 @@ func New(opts ...Option) (*Router, error) {
 		MaxHeaderBytes:    1 << 20,
 	}
 
-	if r.csrfEnabled {
-		logger.LogInfo("CSRF protection enabled (encrypt-time session-bound, 2h validity)")
-	} else {
-		logger.LogInfo("CSRF protection disabled")
-	}
 
-	if r.honeypotEnabled {
-		logger.LogInfo("Honeypot protection enabled (field: '%s')", r.honeypotFieldName)
-	} else {
-		logger.LogInfo("Honeypot protection disabled")
-	}
 
 	if cfg.HealthCheck.Enabled {
 		hcPath := cfg.HealthCheck.Path

@@ -39,6 +39,7 @@ Berkas **`kiya.go`** adalah pusat pengatur (*core constructor*) utama dari frame
 | **Memory Optimization** | `sync.Pool` | Resusabilitas objek `Context` HTTP untuk mengurangi beban Garbage Collection. |
 | **Auto Health Check** | `/health` | Endpoint otomatis untuk monitoring kondisi server & database ping. |
 | **Prometheus Metrics** | `/metrics` | Endpoint publikasi statistik performa server format Prometheus. |
+| **SMTP Mailer** | `kiya.SendMail()` | Utilitas pengirim email generik dengan dukungan template HTML. |
 
 #### 💡 Cara Inisialisasi Engine:
 ```go

@@ -1,7 +1,6 @@
 package kiya
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,14 +34,10 @@ type Context struct {
 	database        *DB
 	params          []router.Param
 	locals          *Locals
-	renderer        *web.Renderer
 	written         bool
 	aborted         bool
 	body            []byte
 	encryptKey        []byte
-	csrfEnabled       bool
-	honeypotEnabled   bool
-	honeypotFieldName string
 	currentUserFunc   func(*Context) (any, string)
 	browserID         string
 	browserValid      bool
@@ -56,19 +51,15 @@ func (c *Context) Locals() *Locals               { return c.locals }
 func (c *Context) BrowserID() string             { return c.browserID }
 func (c *Context) ValidBrowser() bool            { return c.browserValid }
 
-func (c *Context) reset(w http.ResponseWriter, req *http.Request, renderer *web.Renderer) {
+func (c *Context) reset(w http.ResponseWriter, req *http.Request) {
 	c.response = w
 	c.request = req
 	c.session = nil
 	c.database = nil
-	c.renderer = renderer
 	c.params = c.params[:0]
 	c.aborted = false
 	c.body = nil
 	c.encryptKey = nil
-	c.csrfEnabled = false
-	c.honeypotEnabled = false
-	c.honeypotFieldName = ""
 	c.currentUserFunc = nil
 	c.browserID = ""
 	c.browserValid = false
@@ -187,85 +178,7 @@ func (c *Context) APIResponse(code int, message string, errs map[string][]string
 	return err
 }
 
-func (c *Context) Render(code int, name string, data ...Map) error {
-	if c.renderer == nil {
-		return errors.New("renderer is not initialized")
-	}
 
-	if c.IsAJAX() {
-		message := http.StatusText(code)
-		if len(data) > 0 && data[0] != nil {
-			if msg, ok := data[0]["message"]; ok {
-				if msgStr, ok := msg.(string); ok {
-					message = msgStr
-				}
-			}
-		}
-
-		var jsonData any
-		if len(data) > 0 && data[0] != nil {
-			jsonData = web.SanitizeForJSON(data[0])
-		} else {
-			jsonData = []string{}
-		}
-
-		return c.APIResponse(code, message, map[string][]string{}, jsonData)
-	}
-
-	return c.renderHTML(code, name, data...)
-}
-
-func (c *Context) RenderHTML(code int, name string, data ...Map) error {
-	if c.renderer == nil {
-		return errors.New("renderer is not initialized")
-	}
-	return c.renderHTML(code, name, data...)
-}
-
-func (c *Context) renderHTML(code int, name string, data ...Map) error {
-	var ctx Map
-	if len(data) > 0 && data[0] != nil {
-		ctx = data[0]
-	} else {
-		ctx = make(Map)
-	}
-
-	if _, exists := ctx["Request"]; !exists {
-		ctx["Request"] = c.request
-	}
-
-	if len(c.encryptKey) > 0 {
-		ctx["_encKey"] = c.encryptKey
-	}
-
-	var csrfToken string
-	if c.csrfEnabled && len(c.encryptKey) > 0 {
-		if token, err := security.GenerateCSRFToken(c.session, c.encryptKey); err == nil {
-			csrfToken = token
-			ctx["csrf_token"] = csrfToken
-		}
-	}
-
-	var buf bytes.Buffer
-	if err := c.renderer.Render(&buf, name, ctx); err != nil {
-		return err
-	}
-
-	htmlStr := buf.String()
-	if csrfToken != "" {
-		htmlStr = web.InjectCSRFIntoForms(htmlStr, csrfToken)
-		htmlStr = web.InjectCSRFMeta(htmlStr, csrfToken)
-	}
-
-	if c.honeypotEnabled && c.honeypotFieldName != "" {
-		htmlStr = web.InjectHoneypotIntoForms(htmlStr, c.honeypotFieldName)
-	}
-
-	c.response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	c.Status(code)
-	_, err := io.WriteString(c.response, htmlStr)
-	return err
-}
 
 func (c *Context) Redirect(code int, redirectURL string) error {
 	if !isValidRedirectCode(code) {
@@ -433,20 +346,8 @@ func (c *Context) DecryptID(encoded ...string) (int64, error) {
 	return strconv.ParseInt(str, 10, 64)
 }
 
-func (c *Context) GenerateCSRFToken() (string, error) {
-	return security.GenerateCSRFToken(c.session, c.encryptKey)
-}
-
-func (c *Context) VerifyCSRFToken(token string) bool {
-	return security.VerifyCSRFToken(token, c.session, c.encryptKey)
-}
-
 func (c *Context) ExtractIP() string {
 	return util.RealIP(c.request)
-}
-
-func (c *Context) NewWebSocket() (*web.WebSocketConn, error) {
-	return web.NewWebSocket(c.response, c.request)
 }
 
 func (c *Context) CurrentUser() (id any, name string) {

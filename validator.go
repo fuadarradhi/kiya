@@ -525,13 +525,13 @@ func valRequired(v *Validator, param string) RulesFunc {
 	return func(val any) error {
 		if str, ok := val.(string); ok {
 			if len(str) == 0 {
-				return errors.New("is required")
+				return errors.New("harus diisi")
 			}
 		}
 
 		if t, ok := val.(time.Time); ok {
 			if t.IsZero() {
-				return errors.New("is required")
+				return errors.New("harus diisi")
 			}
 		}
 
@@ -540,16 +540,16 @@ func valRequired(v *Validator, param string) RulesFunc {
 		}
 
 		if val == nil {
-			return errors.New("is required")
+			return errors.New("harus diisi")
 		}
 
 		rv := reflect.ValueOf(val)
 		if (rv.Kind() == reflect.Ptr || rv.Kind() == reflect.Interface) && rv.IsNil() {
-			return errors.New("is required")
+			return errors.New("harus diisi")
 		}
 
 		if isEmpty(val) {
-			return errors.New("is required")
+			return errors.New("harus diisi")
 		}
 
 		return nil
@@ -560,11 +560,11 @@ func valSecPass(v *Validator, param string) RulesFunc {
 	return func(val any) error {
 		str, ok := val.(string)
 		if !ok {
-			return errors.New("invalid password format")
+			return errors.New("format tidak valid")
 		}
 
 		if len(str) < 8 {
-			return errors.New("password must be at least 8 characters")
+			return errors.New("minimal 8 karakter")
 		}
 
 		var (
@@ -588,7 +588,7 @@ func valSecPass(v *Validator, param string) RulesFunc {
 		}
 
 		if !hasUpper || !hasLower || !hasNumber || !hasSymbol {
-			return errors.New("password must contain uppercase, lowercase, numbers, and symbols")
+			return errors.New("harus mengandung huruf besar, huruf kecil, angka, dan simbol")
 		}
 
 		return nil
@@ -603,16 +603,16 @@ func valEmail(v *Validator, param string) RulesFunc {
 
 		str, ok := val.(string)
 		if !ok {
-			return errors.New("invalid email format")
+			return errors.New("format tidak valid")
 		}
 
 		e, err := mail.ParseAddress(str)
 		if err != nil {
-			return errors.New("email is not valid")
+			return errors.New("format tidak valid")
 		}
 
 		if e.Address == "" {
-			return errors.New("email is not valid")
+			return errors.New("format tidak valid")
 		}
 
 		return nil
@@ -627,12 +627,12 @@ func valUrl(v *Validator, param string) RulesFunc {
 
 		str, ok := val.(string)
 		if !ok {
-			return errors.New("invalid url")
+			return errors.New("format tidak valid")
 		}
 
 		u, err := url.ParseRequestURI(str)
 		if err != nil {
-			return errors.New("invalid url")
+			return errors.New("format tidak valid")
 		}
 
 		allowedSchemes := map[string]bool{
@@ -643,7 +643,7 @@ func valUrl(v *Validator, param string) RulesFunc {
 		}
 
 		if !allowedSchemes[u.Scheme] {
-			return errors.New("invalid url: scheme not allowed")
+			return errors.New("format tidak valid: skema tidak diizinkan")
 		}
 
 		return nil
@@ -666,10 +666,10 @@ func valNumeric(v *Validator, param string) RulesFunc {
 
 		if str, ok := val.(string); ok {
 			if _, err := strconv.ParseFloat(str, 64); err != nil {
-				return errors.New("must be a number")
+				return errors.New("harus berupa angka")
 			}
 		} else {
-			return errors.New("must be a number")
+			return errors.New("harus berupa angka")
 		}
 		return nil
 	}
@@ -692,7 +692,7 @@ func valLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) != p {
-			return fmt.Errorf("must be %d characters", p)
+			return fmt.Errorf("harus %d karakter", p)
 		}
 		return nil
 	}
@@ -715,7 +715,7 @@ func valOpLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) != p {
-			return fmt.Errorf("must be %d characters", p)
+			return fmt.Errorf("harus %d karakter", p)
 		}
 		return nil
 	}
@@ -738,7 +738,7 @@ func valMaxLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) > p {
-			return fmt.Errorf("maximum %d characters", p)
+			return fmt.Errorf("maksimal %d karakter", p)
 		}
 		return nil
 	}
@@ -761,7 +761,7 @@ func valMinLength(v *Validator, param string) RulesFunc {
 		}
 
 		if len(str) < p {
-			return fmt.Errorf("minimum %d characters", p)
+			return fmt.Errorf("minimal %d karakter", p)
 		}
 		return nil
 	}

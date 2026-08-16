@@ -24,7 +24,6 @@ import (
 	"github.com/fuadarradhi/kiya/internal/metrics"
 	"github.com/fuadarradhi/kiya/internal/router"
 	"github.com/fuadarradhi/kiya/internal/security"
-	"github.com/fuadarradhi/kiya/internal/web"
 )
 
 type contextKey string
@@ -49,7 +48,6 @@ type Router struct {
 	browserCookieEnabled bool
 	browserCookieName    string
 	browserSecret        []byte
-	renderer             *web.Renderer
 
 	rateLimiter      security.RateLimitStore
 	keyFunc          func(r *http.Request, sess *Session) string
@@ -63,12 +61,7 @@ type Router struct {
 	cachePaths        []string
 	noLogSuccessPaths []string
 
-	csrfEnabled     bool
-	csrfExemptPaths []string
 
-	honeypotEnabled     bool
-	honeypotFieldName   string
-	honeypotExemptPaths []string
 
 	csp            string
 	cspExemptPaths []string
@@ -132,8 +125,6 @@ func (r *Router) clone() *Router {
 		browserCookieEnabled: r.browserCookieEnabled,
 		browserCookieName:    r.browserCookieName,
 		browserSecret:        r.browserSecret,
-		renderer:             r.renderer,
-
 		rateLimiter:      r.rateLimiter,
 		keyFunc:          r.keyFunc,
 		forceHTTPS:       r.forceHTTPS,
@@ -146,12 +137,7 @@ func (r *Router) clone() *Router {
 		cachePaths:        r.cachePaths,
 		noLogSuccessPaths: r.noLogSuccessPaths,
 
-		csrfEnabled:     r.csrfEnabled,
-		csrfExemptPaths: r.csrfExemptPaths,
-
-		honeypotEnabled:     r.honeypotEnabled,
-		honeypotFieldName:   r.honeypotFieldName,
-		honeypotExemptPaths: r.honeypotExemptPaths,
+	
 
 		csp:            r.csp,
 		cspExemptPaths: r.cspExemptPaths,
@@ -386,7 +372,7 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 
 	res := r.resPool.Get().(*Context)
 	defer func() {
-		res.reset(nil, nil, nil)
+		res.reset(nil, nil)
 		r.resPool.Put(res)
 	}()
 
@@ -394,11 +380,8 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	req = req.WithContext(reqCtx)
 
-	res.reset(w, req, r.renderer)
+	res.reset(w, req)
 	res.encryptKey = r.encryptKey
-	res.csrfEnabled = r.csrfEnabled
-	res.honeypotEnabled = r.honeypotEnabled
-	res.honeypotFieldName = r.honeypotFieldName
 	res.currentUserFunc = r.currentUserFunc
 
 	defer func() {
@@ -509,68 +492,6 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	if r.csrfEnabled && req.Method != http.MethodGet && req.Method != http.MethodHead && req.Method != http.MethodOptions {
-		isExempt := false
-		for _, p := range r.csrfExemptPaths {
-			if strings.HasPrefix(req.URL.Path, p) {
-				isExempt = true
-				break
-			}
-		}
-
-		if !isExempt {
-			csrfToken := req.Header.Get("X-CSRF-Token")
-			if csrfToken == "" {
-				ct := req.Header.Get("Content-Type")
-				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || strings.HasPrefix(ct, "multipart/form-data") {
-					if err := req.ParseForm(); err == nil {
-						csrfToken = req.FormValue("csrf_token")
-					}
-				}
-			}
-
-			if !res.VerifyCSRFToken(csrfToken) {
-				err := &HTTPError{
-					Code:    http.StatusForbidden,
-					Message: "Invalid or expired CSRF token",
-				}
-				r.handleError(res, err)
-				return
-			}
-		}
-	}
-
-	if r.honeypotEnabled && req.Method != http.MethodGet && req.Method != http.MethodHead && req.Method != http.MethodOptions {
-		isExempt := false
-		for _, p := range r.honeypotExemptPaths {
-			if strings.HasPrefix(req.URL.Path, p) {
-				isExempt = true
-				break
-			}
-		}
-
-		if !isExempt {
-			hpVal := req.Header.Get("X-Honeypot-Token")
-			if hpVal == "" {
-				ct := req.Header.Get("Content-Type")
-				if strings.HasPrefix(ct, "application/x-www-form-urlencoded") || strings.HasPrefix(ct, "multipart/form-data") {
-					if err := req.ParseForm(); err == nil {
-						hpVal = req.FormValue(r.honeypotFieldName)
-					}
-				}
-			}
-
-			if hpVal != "" {
-				logger.LogWarn("Honeypot bot detected on %s %s (field '%s' filled with '%s')", req.Method, req.URL.Path, r.honeypotFieldName, hpVal)
-				err := &HTTPError{
-					Code:    http.StatusBadRequest,
-					Message: "Spam submission detected",
-				}
-				r.handleError(res, err)
-				return
-			}
-		}
-	}
 
 	handler, params := r.tree.FindRoute(req.Method, req.URL.Path)
 

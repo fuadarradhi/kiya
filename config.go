@@ -2,7 +2,6 @@ package kiya
 
 import (
 	"errors"
-	"io/fs"
 	"net/http"
 	"time"
 )
@@ -26,7 +25,6 @@ type config struct {
 	Telegram          TelegramConfig
 	Server            ServerConfig
 	Database          DatabaseConfig
-	View              ViewConfig
 	RateLimiter       RateLimiterConfig
 	Encryption        EncryptionConfig
 	CachePaths        []string
@@ -89,11 +87,6 @@ type ServerConfig struct {
 	ForceHTTPS        bool
 	SecureCookie      bool
 	TrustProxyHeaders bool
-	CSRFEnabled       bool
-	CSRFExemptPaths   []string
-	HoneypotEnabled   bool
-	HoneypotFieldName string
-	HoneypotExemptPaths []string
 	SameSite          string
 }
 
@@ -121,10 +114,6 @@ type DatabaseConfig struct {
 	ConnMaxLifetime time.Duration
 	Timezone        string
 	Scope           ScopeFunc
-}
-
-type ViewConfig struct {
-	FS fs.FS
 }
 
 type RateLimiterConfig struct {

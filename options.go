@@ -1,7 +1,6 @@
 package kiya
 
 import (
-	"io/fs"
 	"net/http"
 	"time"
 )
@@ -149,45 +148,7 @@ func WithTimeouts(read, write, idle time.Duration) Option {
 	}
 }
 
-func WithViews(viewFS fs.FS) Option {
-	return func(c *config) {
-		c.View.FS = viewFS
-	}
-}
 
-func WithCSRF() Option {
-	return func(c *config) {
-		c.Server.CSRFEnabled = true
-	}
-}
-
-func WithoutCSRF(exemptPaths ...string) Option {
-	return func(c *config) {
-		c.Server.CSRFEnabled = true
-		c.Server.CSRFExemptPaths = append(c.Server.CSRFExemptPaths, exemptPaths...)
-	}
-}
-
-func WithHoneypot(fieldName ...string) Option {
-	return func(c *config) {
-		c.Server.HoneypotEnabled = true
-		name := "honeypot_token"
-		if len(fieldName) > 0 && fieldName[0] != "" {
-			name = fieldName[0]
-		}
-		c.Server.HoneypotFieldName = name
-	}
-}
-
-func WithoutHoneypot(exemptPaths ...string) Option {
-	return func(c *config) {
-		c.Server.HoneypotEnabled = true
-		if c.Server.HoneypotFieldName == "" {
-			c.Server.HoneypotFieldName = "honeypot_token"
-		}
-		c.Server.HoneypotExemptPaths = append(c.Server.HoneypotExemptPaths, exemptPaths...)
-	}
-}
 
 
 
