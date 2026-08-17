@@ -176,7 +176,45 @@ Ketika `WithHoneypot()` aktif (secara bawaan menggunakan field name `honeypot_to
 2. **Auto-Detect Spam Bot**: Pengunjung manusia tidak akan melihat maupun mengisi input tersembunyi ini. Jika ada spam bot otomatis yang mengisi field `honeypot_token`, Kiya secara otomatis menolak request tersebut (`400 Bad Request: Spam submission detected`) sebelum masuk ke handler aplikasi.
 3. **Pengecualian Rute**: Gunakan `WithoutHoneypot("/api")` untuk mengecualikan endpoint REST API atau Webhook dari pemeriksaan Honeypot.
 
+#### F. CSRF untuk API JSON/SPA (`c.GenerateCSRFToken` & `c.VerifyCSRFToken`)
+`InjectCSRFIntoForms`/`WithCSRF()` (poin D) hanya berlaku untuk HTML yang dirender Pongo2 — tidak ada `<form>` untuk disisipi pada backend JSON murni (SPA yang fetch/XHR). Untuk kasus ini, `Context` membungkus `security.GenerateCSRFToken`/`VerifyCSRFToken` secara langsung:
+```go
+// Endpoint bootstrap, dipanggil sekali oleh SPA sebelum request mutating pertama.
+// Tidak butuh login — kiya membuat session baru untuk visitor anonim juga.
+func CSRFTokenHandler(c *kiya.Context) error {
+    token, err := c.GenerateCSRFToken()
+    if err != nil {
+        return c.JSON(500, kiya.Map{"message": "Gagal membuat token CSRF"})
+    }
+    return c.JSON(200, kiya.Map{"csrf_token": token})
+}
 
+// Middleware pemeriksa, dipasang di route group yang menerima method mutating.
+func VerifyCSRF(next kiya.HandlerFunc) kiya.HandlerFunc {
+    return func(c *kiya.Context) error {
+        if c.Request().Method == http.MethodGet {
+            return next(c)
+        }
+        if !c.VerifyCSRFToken(c.Request().Header.Get("X-CSRF-Token")) {
+            return c.JSON(403, kiya.Map{"message": "Token CSRF tidak valid"})
+        }
+        return next(c)
+    }
+}
+```
+Token terikat ke session ID + timestamp (AES-GCM, kadaluwarsa 7200 detik) — sama persis mekanisme yang dipakai `InjectCSRFIntoForms`, cuma jalur pengambilan/pengirimannya beda (header `X-CSRF-Token`, bukan hidden input form).
+
+#### G. Session Lifetime Kustom (`Session.SetMaxAge`)
+Default umur cookie session diatur global lewat `cfg.Server.SessionMaxAge`. Untuk kasus per-session butuh umur berbeda (mis. fitur "ingat saya" yang memperpanjang sesi login jadi 7 hari, dibanding sesi biasa yang lebih pendek), panggil `SetMaxAge` sebelum `Save()`:
+```go
+sess := c.Session()
+sess.SetString("actor_id", "42")
+if req.Remember {
+    sess.SetMaxAge(7 * 24 * 3600) // 7 hari
+}
+sess.Save()
+```
+`0` = session cookie (hilang saat browser ditutup), negatif = hapus cookie saat `Save()`.
 
 ---
 

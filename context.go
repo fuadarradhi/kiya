@@ -350,6 +350,18 @@ func (c *Context) ExtractIP() string {
 	return util.RealIP(c.request)
 }
 
+// GenerateCSRFToken issues a token bound to the current session, encrypted with the
+// app's configured encryption key (kiya.WithEncryption). Valid for 7200s.
+func (c *Context) GenerateCSRFToken() (string, error) {
+	return security.GenerateCSRFToken(c.session, c.encryptKey)
+}
+
+// VerifyCSRFToken checks a token produced by GenerateCSRFToken against the current
+// session and encryption key.
+func (c *Context) VerifyCSRFToken(token string) bool {
+	return security.VerifyCSRFToken(token, c.session, c.encryptKey)
+}
+
 func (c *Context) CurrentUser() (id any, name string) {
 	if c.currentUserFunc == nil {
 		return nil, ""

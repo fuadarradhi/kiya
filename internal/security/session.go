@@ -109,6 +109,18 @@ func (s *Session) Save() error {
 	return nil
 }
 
+// SetMaxAge overrides this session's cookie lifetime in seconds (e.g. for a
+// "remember me" flow that should outlive the default session duration). A
+// negative value deletes the cookie on save; 0 makes it a session cookie
+// (expires when the browser closes).
+func (s *Session) SetMaxAge(seconds int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.raw.Options.MaxAge = seconds
+	s.dirty = true
+}
+
 func (s *Session) ID() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
