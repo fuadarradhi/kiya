@@ -70,6 +70,15 @@ func WithDatabase(driver, host, port, user, password, name string) Option {
 	}
 }
 
+// WithRequestScope wraps every request in a database transaction, running fn's returned
+// statement as that transaction's first statement. See config.RequestScopeFunc for the full
+// contract (when fn runs, how commit/rollback works, how to skip a given request).
+func WithRequestScope(fn func(c *Context) (query string, args []any, err error)) Option {
+	return func(c *config) {
+		c.RequestScopeFunc = fn
+	}
+}
+
 func WithRateLimiter(rate float64, burst int) Option {
 	return func(c *config) {
 		c.RateLimiter.Enabled = true

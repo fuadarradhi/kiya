@@ -77,7 +77,8 @@ type Router struct {
 
 	metrics *metrics.Collector
 
-	currentUserFunc func(*Context) (any, string)
+	currentUserFunc  func(*Context) (any, string)
+	requestScopeFunc func(*Context) (query string, args []any, err error)
 }
 
 func adapterFunc(h HandlerFunc) router.HandlerFunc {
@@ -492,6 +493,40 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
+	// RequestScope: optionally wrap the whole request in a transaction, with an app-supplied
+	// init statement (e.g. Postgres set_config for Row-Level-Security) as its first statement.
+	// Runs after session resolution (fn typically reads res.Session()) and before the route
+	// handler. See config.RequestScopeFunc for the full contract.
+	var reqTx Tx
+	if r.requestScopeFunc != nil && r.database != nil {
+		query, args, scopeErr := r.requestScopeFunc(res)
+		if scopeErr != nil {
+			logger.LogError("[Kiya] RequestScope error: %v", scopeErr)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+		if query != "" {
+			tx, beginErr := res.database.Begin(req.Context())
+			if beginErr != nil {
+				logger.LogError("[Kiya] RequestScope begin tx error: %v", beginErr)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			if _, execErr := tx.Exec(req.Context(), query, args...); execErr != nil {
+				_ = tx.Rollback()
+				logger.LogError("[Kiya] RequestScope init statement error: %v", execErr)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			res.database = res.database.Use(tx)
+			reqTx = tx
+			// Safety net for panics and any early return below: a Rollback() after a
+			// successful Commit() just returns sql.ErrTxDone, which is ignored - harmless.
+			defer func() {
+				_ = reqTx.Rollback()
+			}()
+		}
+	}
 
 	handler, params := r.tree.FindRoute(req.Method, req.URL.Path)
 
@@ -518,6 +553,16 @@ func (r *Router) serveInternal(w http.ResponseWriter, req *http.Request) {
 	err := finalHandler(res)
 	if err != nil {
 		r.handleError(res, err)
+	}
+
+	if reqTx != nil {
+		if err == nil {
+			if commitErr := reqTx.Commit(); commitErr != nil {
+				logger.LogError("[Kiya] RequestScope commit error: %v", commitErr)
+			}
+		} else {
+			_ = reqTx.Rollback()
+		}
 	}
 
 	statusCode := http.StatusOK

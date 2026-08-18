@@ -3,8 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"fmt"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -113,11 +114,14 @@ func (e *sqlxExecutor) Begin(ctx context.Context) (Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sqlxTx{tx: tx}, nil
+	return &sqlxTx{tx: tx, spCount: new(int32)}, nil
 }
 
 type sqlxTx struct {
 	tx *sqlx.Tx
+	// spCount is shared (by pointer) with every savepoint nested inside this transaction,
+	// so SAVEPOINT names stay unique across the whole tree no matter how deep it nests.
+	spCount *int32
 }
 
 func (t *sqlxTx) Select(ctx context.Context, dest any, query string, args ...any) error {
@@ -188,8 +192,17 @@ func (t *sqlxTx) Exec(ctx context.Context, query string, args ...any) (Result, e
 	return t.tx.ExecContext(ctx, query, args...)
 }
 
+// Begin opens a nested transaction as a SAVEPOINT on the same underlying connection,
+// instead of failing - a plain "second BeginTx" is not possible with database/sql, but a
+// savepoint gives the same rollback/commit semantics for the caller. Syntax is identical
+// on PostgreSQL and MySQL/InnoDB, so no per-dialect branching is needed here.
 func (t *sqlxTx) Begin(ctx context.Context) (Tx, error) {
-	return nil, errors.New("cannot begin a transaction within a transaction")
+	n := atomic.AddInt32(t.spCount, 1)
+	name := fmt.Sprintf("kiya_sp_%d", n)
+	if _, err := t.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
+		return nil, err
+	}
+	return &sqlxSavepoint{sqlxTx: t, name: name}, nil
 }
 
 func (t *sqlxTx) Commit() error {
@@ -198,4 +211,23 @@ func (t *sqlxTx) Commit() error {
 
 func (t *sqlxTx) Rollback() error {
 	return t.tx.Rollback()
+}
+
+// sqlxSavepoint is a nested transaction: Select/Get/Exec/Begin are inherited unchanged from
+// the embedded sqlxTx (a savepoint runs on the exact same *sqlx.Tx/connection as its parent,
+// it is not a separate connection), only Commit/Rollback differ - they release or roll back
+// to the savepoint instead of ending the whole transaction.
+type sqlxSavepoint struct {
+	*sqlxTx
+	name string
+}
+
+func (s *sqlxSavepoint) Commit() error {
+	_, err := s.tx.Exec("RELEASE SAVEPOINT " + s.name)
+	return err
+}
+
+func (s *sqlxSavepoint) Rollback() error {
+	_, err := s.tx.Exec("ROLLBACK TO SAVEPOINT " + s.name)
+	return err
 }

@@ -87,6 +87,7 @@ func New(opts ...Option) (*Router, error) {
 		requestIDEnabled:   true,
 
 		currentUserFunc:      cfg.CurrentUserFunc,
+		requestScopeFunc:     cfg.RequestScopeFunc,
 		sessionResolver:      cfg.Server.SessionResolver,
 		browserCookieEnabled: cfg.Server.BrowserCookieEnabled,
 		browserCookieName:    cfg.Server.BrowserCookieName,

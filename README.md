@@ -40,6 +40,7 @@ Berkas **`kiya.go`** adalah pusat pengatur (*core constructor*) utama dari frame
 | **Auto Health Check** | `/health` | Endpoint otomatis untuk monitoring kondisi server & database ping. |
 | **Prometheus Metrics** | `/metrics` | Endpoint publikasi statistik performa server format Prometheus. |
 | **SMTP Mailer** | `kiya.SendMail()` | Utilitas pengirim email generik dengan dukungan template HTML. |
+| **Request-Scoped Transaction** | `WithRequestScope()` | Membungkus tiap request dalam satu transaksi DB + statement inisialisasi custom (lihat bagian 5). |
 
 #### Cara Inisialisasi Engine:
 ```go
@@ -237,6 +238,57 @@ app.Route("/manage", func(r *kiya.Router) {
     r.Get("/dashboard", manage.DashboardHandler)
 })
 ```
+
+---
+
+### 5. `WithRequestScope` - Transaksi Per-Request & Nested Transaction (SAVEPOINT)
+
+`WithRequestScope(fn func(c *Context) (query string, args []any, err error))` membungkus SETIAP
+request yang mencapai route handler dalam satu transaksi database, dan menjalankan statement
+yang dikembalikan `fn` sebagai statement PERTAMA transaksi itu - sebelum handler jalan. Kiya
+sendiri tidak tahu ataupun peduli statement itu isinya apa; ini murni titik ekstensi generik.
+
+Kegunaan paling umum: aplikasi multi-tenant yang memakai **Row-Level Security** Postgres, di
+mana tiap transaksi wajib membuka dengan `set_config('app.sekolah_id', ..., true)` (atau nama
+setelan apa pun) sebelum query lain berjalan, supaya kebijakan RLS tahu tenant mana yang sedang
+aktif. Tapi `fn` bisa mengembalikan statement apa pun - kiya tidak hardcode ke Postgres/RLS.
+
+```go
+app, err := kiya.New(
+    // ...opsi lain...
+    kiya.WithRequestScope(func(c *kiya.Context) (string, []any, error) {
+        tenantID := currentTenantID(c) // logic aplikasi Anda sendiri
+        if tenantID == 0 {
+            // Request belum punya tenant context (mis. halaman login) - lewati wrapping,
+            // handler tetap jalan seperti biasa tanpa transaksi tambahan.
+            return "", nil, nil
+        }
+        return "SELECT set_config('app.tenant_id', $1, true)", []any{tenantID}, nil
+    }),
+)
+```
+
+Kontrak penting:
+- `fn` dipanggil setelah session di-resolve, sebelum route handler - `c.Session()` sudah bisa
+  dibaca di dalam `fn`.
+- Kembalikan `query == ""` untuk melewati wrapping pada request itu (request tetap diproses
+  seperti biasa, tanpa transaksi ekstra) - dipakai untuk rute publik/pra-autentikasi.
+- Bila `fn` mengembalikan error, request langsung dihentikan dengan `500` SEBELUM handler
+  dipanggil.
+- Selama request dibungkus, `c.Database()` di dalam handler SUDAH terikat ke transaksi itu
+  secara transparan - kode handler tidak berubah sama sekali.
+- Commit otomatis bila handler mengembalikan `nil`; rollback otomatis bila handler
+  mengembalikan error ATAU panic (panic tetap di-propagate lagi ke penanganan panic global
+  Kiya setelah rollback, lihat `server/kiya/router.go`).
+
+**Transaksi bertingkat (nested).** Karena seluruh request sudah dibungkus satu transaksi, kode
+handler yang memanggil `db.Transaction(ctx, func(tx kiya.Tx) error { ... })` di dalamnya (pola
+transaksi eksplisit yang sudah ada sebelumnya di banyak handler) sekarang otomatis berjalan
+sebagai **SAVEPOINT** pada transaksi request yang sama (bukan koneksi baru, dan bukan error
+"cannot begin a transaction within a transaction" seperti versi Kiya sebelumnya) - lihat
+`server/kiya/internal/db/executor.go` (`sqlxTx.Begin`, tipe `sqlxSavepoint`). Ini penting justru
+supaya konteks yang di-set lewat `WithRequestScope` (mis. `app.sekolah_id`) tetap berlaku persis
+sama di dalam transaksi bertingkat itu - savepoint tidak pernah pindah koneksi.
 
 ---
 
