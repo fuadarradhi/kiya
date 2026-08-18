@@ -130,7 +130,7 @@ func New(opts ...Option) (*Router, error) {
 			b := make([]byte, 16)
 			rand.Read(b)
 			cfg.Server.SessionSecret = fmt.Sprintf("%x", b)
-			logger.LogWarn("Session secret is empty — generated temporary random key. Sessions will reset on server restart.")
+			logger.LogWarn("Session secret is empty - generated temporary random key. Sessions will reset on server restart.")
 		}
 
 		sessionMaxAge := cfg.Server.SessionMaxAge
@@ -248,7 +248,7 @@ func New(opts ...Option) (*Router, error) {
 			cleanupInterval := cfg.RateLimiter.CleanupInterval
 
 			r.rateLimiter = security.NewStore(rate, burst, ttl, cleanupInterval)
-			logger.LogInfo("Rate limiter enabled (in-memory store, per-instance only — " +
+			logger.LogInfo("Rate limiter enabled (in-memory store, per-instance only - " +
 				"set RateLimiter.Backend to \"redis\" if running more than one instance)")
 		}
 

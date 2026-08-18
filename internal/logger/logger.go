@@ -489,7 +489,7 @@ func LogTelegram(r *http.Request, err any) {
 
 	errStr := fmt.Sprintf("%v", err)
 	if len(errStr) > maxLen {
-		errStr = errStr[:maxLen] + "…"
+		errStr = errStr[:maxLen] + "..."
 	}
 
 	var msg strings.Builder

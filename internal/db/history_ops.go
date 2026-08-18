@@ -213,7 +213,7 @@ func (b *Builder) updateExistingOrNotFound(self any) error {
 		return notFoundErr()
 	}
 	if affected > 1 {
-		logger.LogWarn("[DB] matched %d rows on table '%s' — history entry reflects a single locked row; use UpdateAll for intentional bulk updates", affected, b.table)
+		logger.LogWarn("[DB] matched %d rows on table '%s' - history entry reflects a single locked row; use UpdateAll for intentional bulk updates", affected, b.table)
 	}
 
 	syncPrimaryKey(self, old)
@@ -412,7 +412,7 @@ func (b *Builder) updateMapWithHistory(data map[string]any) error {
 			return notFoundErr()
 		}
 		if affected > 1 {
-			logger.LogWarn("[DB] Update() matched %d rows on table '%s' — history entry reflects a single row; use UpdateAll for intentional bulk updates", affected, tb.table)
+			logger.LogWarn("[DB] Update() matched %d rows on table '%s' - history entry reflects a single row; use UpdateAll for intentional bulk updates", affected, tb.table)
 		}
 		return nil
 	})

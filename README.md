@@ -1,30 +1,30 @@
-# Kiya Framework 🚀
+# Kiya Framework
 
 Framework web Go yang aman, cepat, dan modular dengan fitur keamanan enterprise bawaan (WAF, Rate Limiting, Session Management, Pongo2 View Engine, dan Active Record ORM).
 
-## 🎯 3 Pilar Utama Framework Kiya
+## 3 Pilar Utama Framework Kiya
 
-1. 🛡️ **Keamanan Maksimal (OWASP Compliance Standard)**:
+1. **Keamanan Maksimal (OWASP Compliance Standard)**:
    - **WAF Engine (Coraza)** bawaan untuk proteksi otomatis SQLi, XSS, Path Traversal, Command Injection.
    - **Isolasi Session Scope (`WithSessionResolver`)**: Mengisolasi cookie session per rute/scope.
    - **Persistent HMAC Browser Cookie (`WithBrowserCookie`)**: Signature HMAC-SHA256 bound ke `User-Agent` untuk mencegah pencurian cookie session.
    - **Auto Anti-CSRF & Anti-Bot Honeypot**: Penanganan otomatis token CSRF dan jebakan bot spam.
-2. ⚡ **Performa High Concurrency (Ribuan Akses Bersamaan)**:
+2. **Performa High Concurrency (Ribuan Akses Bersamaan)**:
    - **Zero-Allocation Context Reuse (`sync.Pool`)**: Mengurangi beban alokasi memori GC secara dramatis pada traffic tinggi.
    - **Zero-Cron Real-time Aggregation**: Terintegrasi sempurna dengan Database Triggers & Active Record ORM.
    - **Fast Trie-Tree Routing**: Routing ultra-cepat berbasis Trie Tree dengan auto trailing-slash normalization.
-3. 🎨 **User-Friendly & Developer-Centric**:
+3. **User-Friendly & Developer-Centric**:
    - API yang bersih, mudah digunakan (*developer-friendly*), serta menghasilkan pengalaman pengguna (*UX*) yang responsif & bersahabat.
 
 ---
 
-## 📚 Dokumentasi Berkas Framework & Cara Penggunaan
+## Dokumentasi Berkas Framework & Cara Penggunaan
 
-### 1. `kiya.go` — Entrypoint & Engine Constructor
+### 1. `kiya.go` - Entrypoint & Engine Constructor
 
 Berkas **`kiya.go`** adalah pusat pengatur (*core constructor*) utama dari framework Kiya. Berkas ini menyediakan fungsi `kiya.New(opts ...Option) (*Router, error)` untuk menginisialisasi seluruh subsistem server HTTP.
 
-#### 🛠️ Fitur & Subsistem yang Diinisialisasi di `kiya.go`:
+#### Fitur & Subsistem yang Diinisialisasi di `kiya.go`:
 
 | Subsistem | Komponen Internal | Deskripsi |
 | :--- | :--- | :--- |
@@ -41,7 +41,7 @@ Berkas **`kiya.go`** adalah pusat pengatur (*core constructor*) utama dari frame
 | **Prometheus Metrics** | `/metrics` | Endpoint publikasi statistik performa server format Prometheus. |
 | **SMTP Mailer** | `kiya.SendMail()` | Utilitas pengirim email generik dengan dukungan template HTML. |
 
-#### 💡 Cara Inisialisasi Engine:
+#### Cara Inisialisasi Engine:
 ```go
 app, err := kiya.New(
     kiya.WithAddr("0.0.0.0", 8080),
@@ -70,11 +70,11 @@ app, err := kiya.New(
 
 ---
 
-### 2. Berkas `models.go` & `history.go` — Active Record & Audit Trail History (`BaseModel`)
+### 2. Berkas `models.go` & `history.go` - Active Record & Audit Trail History (`BaseModel`)
 
 Fitur **`BaseModel`** di Kiya membuat struct Go bertindak sebagai ORM Active Record dengan query builder terintegrasi (`.WhereEq()`, `.Find()`, `.Insert()`, `.Update()`, `.Delete()`, `.Purge()`).
 
-#### 📋 Aturan Field Standar pada `BaseModel` & Tabel Database:
+#### Aturan Field Standar pada `BaseModel` & Tabel Database:
 
 Secara standar, setiap model database **WAJIB memuat seluruh field audit & lifecycle berikut** (kecuali secara eksplisit disebutkan tidak perlu):
 
@@ -91,7 +91,7 @@ Secara standar, setiap model database **WAJIB memuat seluruh field audit & lifec
 | `-` | `db:"active"` | `VIRTUAL GENERATED` | Helper Unique Constraint (`CASE WHEN deleted_at IS NULL THEN 1 ELSE NULL END`) |
 | `History` | `db:"history"` | `TEXT / JSON` | Auto Audit Trail Log JSON Array (`created`, `modified`, `deleted`, `restored`, delta `changes`) |
 
-#### 📝 Contoh Struktur Model Standar Lengkap:
+#### Contoh Struktur Model Standar Lengkap:
 ```go
 package models
 
@@ -177,10 +177,10 @@ Ketika `WithHoneypot()` aktif (secara bawaan menggunakan field name `honeypot_to
 3. **Pengecualian Rute**: Gunakan `WithoutHoneypot("/api")` untuk mengecualikan endpoint REST API atau Webhook dari pemeriksaan Honeypot.
 
 #### F. CSRF untuk API JSON/SPA (`c.GenerateCSRFToken` & `c.VerifyCSRFToken`)
-`InjectCSRFIntoForms`/`WithCSRF()` (poin D) hanya berlaku untuk HTML yang dirender Pongo2 — tidak ada `<form>` untuk disisipi pada backend JSON murni (SPA yang fetch/XHR). Untuk kasus ini, `Context` membungkus `security.GenerateCSRFToken`/`VerifyCSRFToken` secara langsung:
+`InjectCSRFIntoForms`/`WithCSRF()` (poin D) hanya berlaku untuk HTML yang dirender Pongo2 - tidak ada `<form>` untuk disisipi pada backend JSON murni (SPA yang fetch/XHR). Untuk kasus ini, `Context` membungkus `security.GenerateCSRFToken`/`VerifyCSRFToken` secara langsung:
 ```go
 // Endpoint bootstrap, dipanggil sekali oleh SPA sebelum request mutating pertama.
-// Tidak butuh login — kiya membuat session baru untuk visitor anonim juga.
+// Tidak butuh login - kiya membuat session baru untuk visitor anonim juga.
 func CSRFTokenHandler(c *kiya.Context) error {
     token, err := c.GenerateCSRFToken()
     if err != nil {
@@ -202,7 +202,7 @@ func VerifyCSRF(next kiya.HandlerFunc) kiya.HandlerFunc {
     }
 }
 ```
-Token terikat ke session ID + timestamp (AES-GCM, kadaluwarsa 7200 detik) — sama persis mekanisme yang dipakai `InjectCSRFIntoForms`, cuma jalur pengambilan/pengirimannya beda (header `X-CSRF-Token`, bukan hidden input form).
+Token terikat ke session ID + timestamp (AES-GCM, kadaluwarsa 7200 detik) - sama persis mekanisme yang dipakai `InjectCSRFIntoForms`, cuma jalur pengambilan/pengirimannya beda (header `X-CSRF-Token`, bukan hidden input form).
 
 #### G. Session Lifetime Kustom (`Session.SetMaxAge`)
 Default umur cookie session diatur global lewat `cfg.Server.SessionMaxAge`. Untuk kasus per-session butuh umur berbeda (mis. fitur "ingat saya" yang memperpanjang sesi login jadi 7 hari, dibanding sesi biasa yang lebih pendek), panggil `SetMaxAge` sebelum `Save()`:
@@ -218,11 +218,11 @@ sess.Save()
 
 ---
 
-### 4. Berkas `router.go` — Routing, Grouping (`Route`), & Trailing Slash Normalization
+### 4. Berkas `router.go` - Routing, Grouping (`Route`), & Trailing Slash Normalization
 
 Kiya Framework memiliki router bawaan yang cepat dengan fitur pencarian berbasis Trie Tree ([internal/router/tree.go](file:///d:/Development/Project/Sinansikula/sinansikula/server/kiya/internal/router/tree.go)).
 
-#### 💡 Fitur Automatic Trailing Slash Normalization:
+#### Fitur Automatic Trailing Slash Normalization:
 Secara internal, Kiya selalu membersihkan path menggunakan `path.Clean()` pada saat **pendaftaran route (`AddRoute`)** maupun **pencarian request (`FindRoute`)**.
 
 Oleh karena itu:
@@ -240,7 +240,7 @@ app.Route("/manage", func(r *kiya.Router) {
 
 ---
 
-### ⚡ Live Reload (Development Mode)
+### Live Reload (Development Mode)
 
 - **WSL (Coding di Windows & Menjalankan di WSL)**:
   ```bash

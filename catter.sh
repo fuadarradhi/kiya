@@ -14,8 +14,8 @@ Description:
 
   Contoh:
     --ext go,html
-    → catter_go.txt
-    → catter_html.txt
+    -> catter_go.txt
+    -> catter_html.txt
 
 Options:
   --ext <ext1,ext2,...>
